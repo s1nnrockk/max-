@@ -69,17 +69,6 @@ import BaseAPI from "./BaseApi";
 import { storiesApiMixin } from "./modules/storiesApi";
 import { loadStoriesCacheFromDisk, refreshStoriesFeed } from "$lib/stores/stories";
 
-function sortFolders(folders, order) {
-  if (!folders || !Array.isArray(folders)) return [];
-  if (!order || !order.length) return [...folders];
-  const orderMap = new Map(order.map((id, index) => [String(id), index]));
-  return [...folders].sort((a, b) => {
-    const ai = orderMap.has(String(a.id)) ? orderMap.get(String(a.id)) : 999999;
-    const bi = orderMap.has(String(b.id)) ? orderMap.get(String(b.id)) : 999999;
-    return ai - bi;
-  });
-}
-
 import { parseApiError, isNo2FaError } from "$lib/utils/errors";
 export { parseApiError, isNo2FaError };
 
@@ -353,7 +342,10 @@ export default class MobileApi extends BaseAPI {
       } else if (opc === 277) {
         const p = response.payload;
         if (p?.folders) {
-          const sorted = sortFolders(p.folders, p.foldersOrder || []);
+          const sorted = await invoke("sort_folders", {
+            folders: p.folders,
+            order: p.foldersOrder || [],
+          });
           currentFolders.set(sorted);
         }
       } else if (opc === 150) {
