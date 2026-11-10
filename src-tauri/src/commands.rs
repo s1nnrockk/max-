@@ -126,6 +126,47 @@ pub fn sort_folders(folders: Vec<Value>, order: Vec<Value>) -> Vec<Value> {
     indexed.into_iter().map(|(_, folder)| folder).collect()
 }
 
+/// Merge read-receipt results into the cached chat model on the native side.
+#[tauri::command]
+pub fn merge_read_message_state(
+    mut chat: Value,
+    response: Option<Value>,
+    remaining_count: Option<i64>,
+    mark_time: Option<i64>,
+    user_id: Option<u64>,
+) -> Value {
+    let Some(object) = chat.as_object_mut() else {
+        return chat;
+    };
+
+    let unread = response.as_ref()
+        .and_then(|value| value.get("unread"))
+        .and_then(Value::as_i64)
+        .or(remaining_count)
+        .or_else(|| object.get("newMessages").and_then(Value::as_i64));
+
+    let mark = response.as_ref()
+        .and_then(|value| value.get("mark"))
+        .and_then(Value::as_i64)
+        .or(mark_time)
+        .unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
+
+    if let Some(unread) = unread {
+        object.insert("newMessages".to_string(), json!(unread));
+    }
+
+    let mut participants = object.get("participants")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    if let Some(user_id) = user_id {
+        participants.insert(user_id.to_string(), json!(mark));
+    }
+    object.insert("participants".to_string(), Value::Object(participants));
+
+    chat
+}
+
 fn folder_sort_key(value: &Value) -> String {
     match value {
         Value::String(value) => value.clone(),
