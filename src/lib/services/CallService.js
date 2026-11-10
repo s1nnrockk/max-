@@ -505,12 +505,17 @@ class MaxCallSession {
 
   get encryption() { return this.#encryption; }
 
-  #applyTrackLabels(sdp) {
+  async #applyTrackLabels(sdp) {
     const isScreen = Boolean(get(activeCall).screenOn);
     const isVideo = Boolean(get(activeCall).videoOn);
     const camTrack = this.#cameraStream?.getVideoTracks()[0]?.id || (isLinuxClient && isVideo && !isScreen ? 'camera0' : null);
     const scrTrack = this.#screenStream?.getVideoTracks()[0]?.id || (isLinuxClient && isScreen ? 'camera0' : null);
-    return labelLocalTracks(sdp, this.#myCallUserId, camTrack, scrTrack);
+    return invoke('label_call_sdp_tracks', {
+      sdp: sdp || '',
+      userId: this.#myCallUserId == null ? null : String(this.#myCallUserId),
+      cameraTrackId: camTrack,
+      screenTrackId: scrTrack,
+    });
   }
 
   #onSfuSlots(slots) {
@@ -1166,7 +1171,7 @@ class MaxCallSession {
   async #openVoiceChannel(endpoint) {
     const ch = new VoiceChannel();
     this.#voiceChannel = ch;
-    const url = this.#buildWs2Url(endpoint);
+    const url = await this.#buildWs2Url(endpoint);
     await ch.connect(url, () => this.#onChannelLost());
 
     ch.on('connection', (msg) => this.#onConnection(msg));
@@ -1304,7 +1309,7 @@ class MaxCallSession {
 
   async #transmitPendingOffer() {
     if (!this.#pendingOffer || !this.#ws2PeerId || !this.#pc?.localDescription) return;
-    const sdp = sanitizeSdpBundle(this.#applyTrackLabels(this.#pc.localDescription.sdp));
+    const sdp = sanitizeSdpBundle(await this.#applyTrackLabels(this.#pc.localDescription.sdp));
     if (!sdp || typeof sdp !== 'string' || !sdp.trim().startsWith('v=')) return;
     this.#pendingOffer = false;
     try {
@@ -1349,30 +1354,14 @@ class MaxCallSession {
     this.#pendingLocalCandidates = [];
   }
 
-  #buildWs2Url(endpoint) {
-    try {
-      const u = new URL(endpoint);
-      if (this.#myCallUserId && !u.searchParams.has('userId')) {
-        u.searchParams.set('userId', String(this.#myCallUserId));
-      }
-      u.searchParams.set('version', WS2_VERSION);
-      u.searchParams.set('capabilities', WS2_CAPABILITIES);
-      u.searchParams.set('platform', INTERNAL_PARAMS_PLATFORM);
-      u.searchParams.set('clientType', 'ONE_ME');
-      u.searchParams.set('appVersion', `sdk-${INTERNAL_PARAMS_SDK}`);
-      u.searchParams.set('osVersion', DEFAULT_OS_VERSION);
-      u.searchParams.set('device', DEFAULT_DEVICE);
-      if (this.#role === 'originator') {
-        u.searchParams.set('tgt', 'start');
-      } else {
-        u.searchParams.delete('tgt');
-      }
-      const built = u.toString();
-      log('ws2 url generated:', built);
-      return built;
-    } catch {
-      return endpoint;
-    }
+  async #buildWs2Url(endpoint) {
+    const built = await invoke('build_call_ws2_url', {
+      endpoint,
+      userId: this.#myCallUserId == null ? null : String(this.#myCallUserId),
+      originator: this.#role === 'originator',
+    });
+    log('ws2 url generated:', built);
+    return built;
   }
 
   async #captureMedia(isVideo) {
@@ -1763,7 +1752,7 @@ class MaxCallSession {
         patchCallState({ phase: this.#role === 'originator' ? CALL_PHASE.OUTGOING : CALL_PHASE.ACTIVE });
         const offer = await pc.createOffer(OFFER_CONSTRAINTS);
         await pc.setLocalDescription(offer);
-        const localSdp = this.#applyTrackLabels(pc.localDescription?.sdp || offer.sdp);
+        const localSdp = await this.#applyTrackLabels(pc.localDescription?.sdp || offer.sdp);
         log(`[call:sdp:local-offer] role=${this.#role}`, localSdp);
         this.#extractAndApplyFingerprint(localSdp, true);
         if (targetPeerId && localSdp && localSdp.trim().startsWith('v=')) {
@@ -1788,15 +1777,9 @@ class MaxCallSession {
     }
   }
 
-  #extractSsrcs(sdp) {
+  async #extractSsrcs(sdp) {
     if (!sdp) return [];
-    const set = new Set();
-    const regex = /^a=ssrc:(\d+)/gm;
-    let m;
-    while ((m = regex.exec(sdp)) !== null) {
-      if (m[1]) set.add(m[1]);
-    }
-    return Array.from(set);
+    return invoke('extract_call_ssrcs', { sdp });
   }
 
   async #onProducerUpdated(msg) {
@@ -1832,7 +1815,7 @@ class MaxCallSession {
         return;
       }
 
-      const ssrcs = this.#extractSsrcs(sdp);
+      const ssrcs = await this.#extractSsrcs(sdp);
       this.#extractAndApplyFingerprint(sdp, false);
 
       let pc = await this.#buildPeerConnection();
@@ -1882,7 +1865,7 @@ class MaxCallSession {
 
       const rawAnswerSdp = pc.localDescription?.sdp || answer.sdp || '';
       const embeddedSdp = this.#embedLocalCandidates(rawAnswerSdp);
-      const answerSdp = this.#applyTrackLabels(embeddedSdp);
+      const answerSdp = await this.#applyTrackLabels(embeddedSdp);
       this.#extractAndApplyFingerprint(answerSdp, true);
       if (get(activeCall).mode === CALL_MODE.SECURE && get(activeCall).secureStatus !== 'active') {
         this.enableSecureMode().catch(() => {});
@@ -1981,7 +1964,7 @@ class MaxCallSession {
         if (type === 'offer') {
           const answer = await pc.createAnswer();
           await pc.setLocalDescription(answer);
-          const localSdp = this.#applyTrackLabels(pc.localDescription?.sdp || answer.sdp);
+          const localSdp = await this.#applyTrackLabels(pc.localDescription?.sdp || answer.sdp);
           this.#extractAndApplyFingerprint(localSdp, true);
           const targetPeerId = this.#ws2PeerId || this.#contactPeerId;
           log('[call:sdp:local-answer]', localSdp);
@@ -2586,7 +2569,7 @@ class MaxCallSession {
     try {
       const offer = await this.#pc.createOffer(OFFER_CONSTRAINTS);
       await this.#pc.setLocalDescription(offer);
-      const localSdp = sanitizeSdpBundle(this.#applyTrackLabels(this.#pc.localDescription?.sdp || offer.sdp));
+      const localSdp = sanitizeSdpBundle(await this.#applyTrackLabels(this.#pc.localDescription?.sdp || offer.sdp));
       this.#extractAndApplyFingerprint(localSdp, true);
       if (localSdp && localSdp.trim().startsWith('v=')) {
         log('[call:sdp:renegotiate-offer]', localSdp);
