@@ -828,4 +828,36 @@ mod migration_tests {
         }));
         assert_eq!(response["codeDelay"], 30);
     }
+
+    #[test]
+    fn read_state_merge_uses_server_unread_and_mark() {
+        let chat = json!({
+            "id": 42,
+            "newMessages": 8,
+            "participants": {"7": 100}
+        });
+        let response = Some(json!({"unread": 2, "mark": 1234}));
+        let updated = merge_read_message_state(chat, response, Some(3), Some(999), Some(7));
+        assert_eq!(updated["newMessages"], 2);
+        assert_eq!(updated["participants"]["7"], 1234);
+        assert_eq!(updated["id"], 42);
+    }
+
+    #[test]
+    fn read_state_merge_uses_fallback_values_when_server_omits_them() {
+        let chat = json!({
+            "id": 42,
+            "newMessages": 8,
+            "participants": {}
+        });
+        let updated = merge_read_message_state(
+            chat,
+            Some(json!({})),
+            Some(4),
+            Some(5678),
+            Some(9),
+        );
+        assert_eq!(updated["newMessages"], 4);
+        assert_eq!(updated["participants"]["9"], 5678);
+    }
 }
