@@ -1,7 +1,7 @@
 [package]
-name = "maxplus"
-version = "0.1.8"
-description = "A Tauri App"
+name = "maxplusplus"
+version = "0.2.0"
+description = "MAX++ — community MAX client"
 authors = ["you"]
 edition = "2021"
 
