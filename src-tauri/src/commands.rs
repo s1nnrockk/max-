@@ -870,4 +870,13 @@ mod migration_tests {
         assert_eq!(updated["newMessages"], 4);
         assert_eq!(updated["participants"]["9"], 5678);
     }
+
+    #[test]
+    fn reconnect_delay_starts_fast_and_caps_backoff() {
+        assert_eq!(reconnect_delay_ms(0), 500);
+        assert_eq!(reconnect_delay_ms(1), 1500);
+        assert_eq!(reconnect_delay_ms(2), 2250);
+        assert_eq!(reconnect_delay_ms(20), 10_000);
+        assert_eq!(reconnect_delay_ms(u32::MAX), 10_000);
+    }
 }
