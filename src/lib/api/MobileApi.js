@@ -1288,7 +1288,10 @@ export default class MobileApi extends BaseAPI {
     await this.waitSync();
     const res = await invoke("get_folders", { folderSync });
     if (res?.folders) {
-      const sorted = sortFolders(res.folders, res.foldersOrder || []);
+      const sorted = await invoke("sort_folders", {
+        folders: res.folders,
+        order: res.foldersOrder || [],
+      });
       currentFolders.set(sorted);
       return sorted;
     }
@@ -1327,7 +1330,10 @@ export default class MobileApi extends BaseAPI {
       favorites: normalized.favorites,
     });
     if (res?.folders) {
-      const sorted = sortFolders(res.folders, res.foldersOrder || []);
+      const sorted = await invoke("sort_folders", {
+        folders: res.folders,
+        order: res.foldersOrder || [],
+      });
       currentFolders.set(sorted);
     } else if (res?.folder) {
       currentFolders.update(folders => {
@@ -1345,7 +1351,11 @@ export default class MobileApi extends BaseAPI {
   async reorderFolders(foldersOrder) {
     await this.waitSync();
     const res = await invoke("reorder_folders", { foldersOrder });
-    currentFolders.update(folders => sortFolders(folders, foldersOrder));
+    const sorted = await invoke("sort_folders", {
+      folders: get(currentFolders) || [],
+      order: foldersOrder || [],
+    });
+    currentFolders.set(sorted);
     return res;
   }
 
