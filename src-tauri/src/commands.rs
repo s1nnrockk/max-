@@ -11,6 +11,17 @@ fn p(s: String) -> Result<u64, Value> {
     s.parse().map_err(|_| Error::Other("Invalid ID".into()).to_json())
 }
 
+/// Resolve the active appearance in Rust; the WebView only reports the OS preference.
+#[tauri::command]
+pub fn resolve_theme_mode(saved: Option<String>, system_dark: bool) -> String {
+    match saved.as_deref() {
+        Some("dark") => "dark".to_string(),
+        Some("light") => "light".to_string(),
+        _ if system_dark => "dark".to_string(),
+        _ => "light".to_string(),
+    }
+}
+
 /// Calculate the bounded reconnect delay in the native core.
 #[tauri::command]
 pub fn reconnect_delay_ms(attempt: u32) -> u64 {
