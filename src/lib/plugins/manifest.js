@@ -1,3 +1,5 @@
+import { invoke } from '@tauri-apps/api/core';
+
 const KNOWN_PERMISSIONS = new Set([
   'ui:mount',
   'ui:style',
@@ -62,60 +64,27 @@ export class PluginLoadError extends Error {
   }
 }
 
-export function validateManifest(manifest, files) {
-  if (!manifest || typeof manifest !== 'object') {
-    throw new PluginLoadError('MISSING_MANIFEST', 'manifest.json is missing or invalid');
-  }
+export async function validateManifest(manifest, files) {
+  const fileSizes = Object.fromEntries(
+    [...files.entries()].map(([path, content]) => [
+      path,
+      new TextEncoder().encode(String(content)).byteLength,
+    ])
+  );
 
-  if (!manifest.id || !ID_REGEX.test(manifest.id)) {
-    throw new PluginLoadError('INVALID_ID', 'Plugin id must match reverse.domain.style format');
+  try {
+    await invoke('validate_plugin_manifest', {
+      manifest,
+      fileSizes,
+    });
+    return true;
+  } catch (error) {
+    const message = String(error ?? 'Plugin manifest validation failed');
+    const separator = message.indexOf('|');
+    const code = separator >= 0 ? message.slice(0, separator) : 'INVALID_MANIFEST';
+    const detail = separator >= 0 ? message.slice(separator + 1) : message;
+    throw new PluginLoadError(code, detail);
   }
-
-  if (!manifest.name || typeof manifest.name !== 'string') {
-    throw new PluginLoadError('INVALID_MANIFEST', 'Plugin name is required');
-  }
-
-  if (!manifest.version || typeof manifest.version !== 'string') {
-    throw new PluginLoadError('INVALID_MANIFEST', 'Plugin version is required');
-  }
-
-  if (!manifest.entry || typeof manifest.entry !== 'string') {
-    throw new PluginLoadError('INVALID_MANIFEST', 'Plugin entry script path is required');
-  }
-
-  if (!files.has(manifest.entry)) {
-    throw new PluginLoadError('MISSING_ENTRY_SCRIPT', `Entry script "${manifest.entry}" not found in archive`);
-  }
-
-  const permissions = manifest.permissions || [];
-  for (const perm of permissions) {
-    if (!KNOWN_PERMISSIONS.has(perm)) {
-      throw new PluginLoadError('UNKNOWN_PERMISSION', `Unknown permission: "${perm}"`);
-    }
-  }
-
-  const styles = manifest.styles || [];
-  for (const s of styles) {
-    const path = typeof s === 'string' ? s : s.path;
-    if (!files.has(path)) {
-      throw new PluginLoadError('MISSING_FILE', `Style file "${path}" not found in archive`);
-    }
-  }
-
-  const components = manifest.components || [];
-  for (const c of components) {
-    if (c.mountPoint && !KNOWN_MOUNT_POINTS.has(c.mountPoint)) {
-      throw new PluginLoadError('UNKNOWN_MOUNT_POINT', `Unknown mount point: "${c.mountPoint}"`);
-    }
-  }
-
-  for (const [path, content] of files.entries()) {
-    if (content.length > MAX_FILE_BYTES) {
-      throw new PluginLoadError('SIZE_EXCEEDED', `File "${path}" exceeds 128 KB limit`);
-    }
-  }
-
-  return true;
 }
 
 export const PERMISSION_LABELS = {
