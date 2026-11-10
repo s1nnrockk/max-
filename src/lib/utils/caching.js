@@ -31,33 +31,19 @@ export const updateContact = (contact) => {
 
 export const syncContacts = async (contacts, requireInfo) => {
   if (!sessionGet("connected") || !sessionGet("sync")) return;
-  contacts.forEach((raw) => {
-    updateContact(normalizeContact(raw));
-    requireInfo.delete(+raw.id);
+  const normalized = await invoke("normalize_contacts", { contacts });
+  normalized.forEach((contact) => {
+    updateContact(contact);
+    requireInfo.delete(+contact.id);
   });
 
   const userIds = [...requireInfo].map(Number).filter(id => id > 0);
   if (!userIds.length) return;
 
-  const CHUNK_SIZE = 50;
-  for (let i = 0; i < userIds.length; i += CHUNK_SIZE) {
-    const chunk = userIds.slice(i, i + CHUNK_SIZE);
-    try {
-      const response = await invoke("fetch_contacts", {
-        userIds: chunk,
-      });
-
-      if (response?.contacts) {
-        response.contacts.forEach(raw => {
-          updateContact(normalizeContact(raw));
-        });
-      }
-    } catch {}
-
-    if (i + CHUNK_SIZE < userIds.length) {
-      await new Promise(r => setTimeout(r, 60));
-    }
-  }
+  try {
+    const response = await invoke("fetch_contacts_batched", { userIds });
+    (response?.contacts || []).forEach(updateContact);
+  } catch {}
 };
 
 let contactBatch = null;
@@ -129,33 +115,14 @@ const requestAndCacheContact = async contactId => {
     const validIds = [...new Set(batch.ids)].filter(x => x > 0 && !knownContactIds.has(x));
     if (!validIds.length) return;
 
-    const CHUNK_SIZE = 50;
-    for (let i = 0; i < validIds.length; i += CHUNK_SIZE) {
-      const chunk = validIds.slice(i, i + CHUNK_SIZE);
-      try {
-        const response = await invoke("fetch_contacts", {
-          userIds: chunk
-        });
-
-        if (response?.contacts) {
-          for (const raw of response.contacts) {
-            updateContact(normalizeContact(raw));
-          }
-        }
-      } catch {
-        const now = Date.now();
-        for (const cid of chunk) {
-          failedContactIds.set(cid, now);
-        }
-      } finally {
-        for (const cid of chunk) {
-          pendingContactIds.delete(cid);
-        }
-      }
-
-      if (i + CHUNK_SIZE < validIds.length) {
-        await new Promise(r => setTimeout(r, 60));
-      }
+    try {
+      const response = await invoke("fetch_contacts_batched", { userIds: validIds });
+      (response?.contacts || []).forEach(updateContact);
+    } catch {
+      const now = Date.now();
+      for (const cid of validIds) failedContactIds.set(cid, now);
+    } finally {
+      for (const cid of validIds) pendingContactIds.delete(cid);
     }
   }
 };
@@ -185,11 +152,3 @@ export const getContactAsync = async contactId => {
   return getContactStore(id);
 };
 
-const normalizeContact = (contact) => {
-  const { baseRawUrl, baseUrl, ...rest } = contact;
-
-  return {
-    ...rest,
-    avatar: baseRawUrl || baseUrl,
-  };
-};
