@@ -1,7 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { get } from 'svelte/store';
 import { validateManifest, PluginLoadError } from './manifest';
-import { satisfies } from './semver';
 import { buildPluginContext } from './context';
 import { pluginStore, showPluginImportModal } from '$lib/stores/plugins';
 
@@ -41,7 +40,12 @@ export async function loadPlugin(pluginId) {
     return files[path] || null;
   };
 
-  if (!satisfies(APP_VERSION, manifest.minAppVersion, manifest.maxAppVersion)) {
+  const compatible = await invoke('plugin_version_satisfies', {
+    appVersion: APP_VERSION,
+    minVersion: manifest.minAppVersion || null,
+    maxVersion: manifest.maxAppVersion || null,
+  });
+  if (!compatible) {
     console.warn(`[plugins] ${pluginId} version mismatch, skipping load`);
     return;
   }
