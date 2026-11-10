@@ -164,6 +164,7 @@ pub fn run() {
             commands::reconnect_delay_ms,
             commands::resolve_theme_mode,
             commands::plugin_version_satisfies,
+            commands::validate_plugin_manifest,
             commands::fetch_history,
             commands::get_by_phone,
             commands::add_contact,
