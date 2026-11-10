@@ -69,6 +69,37 @@ pub fn normalize_contacts(contacts: Vec<Value>) -> Vec<Value> {
     contacts.into_iter().map(normalize_contact_value).collect()
 }
 
+/// Apply the server-provided folder order before the UI renders the folder list.
+#[tauri::command]
+pub fn sort_folders(folders: Vec<Value>, order: Vec<Value>) -> Vec<Value> {
+    let mut order_map = HashMap::new();
+    for (index, id) in order.into_iter().enumerate() {
+        order_map.insert(folder_sort_key(&id), index);
+    }
+
+    let mut indexed: Vec<(usize, Value)> = folders.into_iter().enumerate().collect();
+    indexed.sort_by_key(|(original_index, folder)| {
+        let rank = folder
+            .get("id")
+            .map(folder_sort_key)
+            .and_then(|key| order_map.get(&key).copied())
+            .unwrap_or(usize::MAX);
+        (rank, *original_index)
+    });
+    indexed.into_iter().map(|(_, folder)| folder).collect()
+}
+
+fn folder_sort_key(value: &Value) -> String {
+    match value {
+        Value::String(value) => value.clone(),
+        Value::Null => "null".to_string(),
+        Value::Bool(value) => value.to_string(),
+        Value::Number(value) => value.to_string(),
+        Value::Array(values) => values.iter().map(folder_sort_key).collect::<Vec<_>>().join(","),
+        Value::Object(_) => "[object Object]".to_string(),
+    }
+}
+
 fn normalize_contact_value(mut contact: Value) -> Value {
     if let Some(object) = contact.as_object_mut() {
         let avatar = object.get("baseRawUrl")
