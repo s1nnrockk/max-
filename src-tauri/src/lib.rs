@@ -168,6 +168,7 @@ pub fn run() {
             commands::label_call_sdp_tracks,
             commands::extract_call_ssrcs,
             commands::build_call_ws2_url,
+            commands::normalize_call_participant,
             commands::plugin_version_satisfies,
             commands::validate_plugin_manifest,
             commands::fetch_history,
