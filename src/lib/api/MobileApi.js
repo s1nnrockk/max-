@@ -141,10 +141,10 @@ export default class MobileApi extends BaseAPI {
             break;
           }
 
-          const delay = this.reconnectAttempts === 0
-            ? 500
-            : Math.min(1000 * Math.pow(1.5, this.reconnectAttempts), 10000);
-          await new Promise((r) => setTimeout(r, delay));
+          const delay = await invoke("reconnect_delay_ms", {
+            attempt: this.reconnectAttempts,
+          });
+          await new Promise((r) => setTimeout(r, Number(delay)));
 
           try {
             const success = await this.init(true, true);
