@@ -900,3 +900,63 @@ mod migration_tests {
         assert_eq!(reconnect_delay_ms(u32::MAX), 10_000);
     }
 }
+
+
+/// Check plugin compatibility in the native core. The WebView only supplies
+/// the manifest's version strings; version parsing and comparison stay in Rust.
+#[tauri::command]
+pub fn plugin_version_satisfies(
+    app_version: String,
+    min_version: Option<String>,
+    max_version: Option<String>,
+) -> bool {
+    fn parts(version: &str) -> [u64; 3] {
+        let mut result = [0_u64; 3];
+        for (index, part) in version.split('.').take(3).enumerate() {
+            result[index] = part.parse::<u64>().unwrap_or(0);
+        }
+        result
+    }
+
+    let app = parts(&app_version);
+    if let Some(minimum) = min_version.as_deref().filter(|v| !v.is_empty()) {
+        if app < parts(minimum) {
+            return false;
+        }
+    }
+    if let Some(maximum) = max_version.as_deref().filter(|v| !v.is_empty()) {
+        if app > parts(maximum) {
+            return false;
+        }
+    }
+    true
+}
+
+#[cfg(test)]
+mod plugin_version_tests {
+    use super::plugin_version_satisfies;
+
+    #[test]
+    fn accepts_versions_inside_inclusive_bounds() {
+        assert!(plugin_version_satisfies(
+            "1.4.2".into(), Some("1.4.0".into()), Some("1.5.0".into())
+        ));
+    }
+
+    #[test]
+    fn rejects_versions_outside_bounds() {
+        assert!(!plugin_version_satisfies(
+            "1.3.9".into(), Some("1.4.0".into()), None
+        ));
+        assert!(!plugin_version_satisfies(
+            "2.0.0".into(), None, Some("1.9.9".into())
+        ));
+    }
+
+    #[test]
+    fn treats_bounds_as_inclusive_and_missing_parts_as_zero() {
+        assert!(plugin_version_satisfies(
+            "1.2".into(), Some("1.2.0".into()), Some("1.2".into())
+        ));
+    }
+}
