@@ -2,9 +2,13 @@
 
 <img src="static/favicon.png" width="120" height="120" alt="Max+ Logo" style="border-radius: 24px; margin-bottom: 20px;">
 
-# Max+ Client
+# MAX++
 
-**Неофициальный клиент «Макс» с поддержкой сквозного E2E-шифрования.**
+**MAX++ — community fork клиента MAX на Tauri + Rust + Svelte.**
+
+Бизнес-логика, сетевой клиент, хранение данных и криптография выполняются на Rust; Svelte отвечает за отображение интерфейса. Перенос выполняется поэтапно, без заявления о полной переписи до завершения миграции.
+
+Документ миграции: [docs/RUST_MIGRATION.md](docs/RUST_MIGRATION.md).
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg?style=for-the-badge)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/Rust-red?style=for-the-badge&logo=rust&logoColor=white)](https://www.rust-lang.org/)
