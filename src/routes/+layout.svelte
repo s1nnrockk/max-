@@ -74,6 +74,7 @@
   });
   let cleanupDeepLink = null;
   let cleanupAutoLock = null;
+  let layoutDestroyed = false;
   let unlistenBackButton = null;
   let unlistenCallAction = null;
   let handleKeydown = null;
@@ -84,8 +85,23 @@
     initKeyboardTracker();
     initTheme();
     cleanupAutoLock = initAutoLockWatcher();
-    await initProxyConfig();
-    cleanupDeepLink = await initDeepLink();
+    // These integrations are not needed to paint the first frame.
+    // Start them in the background so they cannot delay the initial UI.
+    initProxyConfig().catch((error) => {
+      console.warn("Proxy configuration initialization failed", error);
+    });
+
+    initDeepLink()
+      .then((cleanup) => {
+        if (layoutDestroyed) {
+          if (typeof cleanup === "function") cleanup();
+        } else {
+          cleanupDeepLink = cleanup;
+        }
+      })
+      .catch((error) => {
+        console.warn("Deep-link initialization failed", error);
+      });
 
     listen("max", async (event) => {
       addLog(event.payload);
@@ -183,6 +199,7 @@
   }
 
   onDestroy(() => {
+    layoutDestroyed = true;
     if (cleanupAutoLock) cleanupAutoLock();
     if (handleKeydown) window.removeEventListener("keydown", handleKeydown);
     if (unlistenBackButton) unlistenBackButton();
