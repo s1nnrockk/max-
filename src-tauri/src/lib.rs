@@ -160,6 +160,7 @@ pub fn run() {
             commands::fetch_contacts_batched,
             commands::normalize_contacts,
             commands::sort_folders,
+            commands::merge_read_message_state,
             commands::fetch_history,
             commands::get_by_phone,
             commands::add_contact,
