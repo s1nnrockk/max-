@@ -194,37 +194,42 @@ pub fn build_call_ws2_url(
     originator: bool,
 ) -> String {
     let Ok(mut url) = url::Url::parse(&endpoint) else { return endpoint; };
+    let mut pairs: Vec<(String, String)> = url.query_pairs()
+        .map(|(key, value)| (key.into_owned(), value.into_owned()))
+        .collect();
+
+    let mut set = |key: &str, value: &str| {
+        if let Some((_, existing)) = pairs.iter_mut().find(|(name, _)| name == key) {
+            *existing = value.to_string();
+        } else {
+            pairs.push((key.to_string(), value.to_string()));
+        }
+    };
+
     if let Some(user_id) = user_id.filter(|value| !value.is_empty()) {
-        if !url.query_pairs().any(|(key, _)| key == "userId") {
-            url.query_pairs_mut().append_pair("userId", &user_id);
+        if !pairs.iter().any(|(key, _)| key == "userId") {
+            set("userId", &user_id);
         }
     }
-    {
-        let mut query = url.query_pairs_mut();
-        query.append_pair("version", "5");
-        query.append_pair("capabilities", "3c02f");
-        query.append_pair("platform", "ANDROID");
-        query.append_pair("clientType", "ONE_ME");
-        query.append_pair("appVersion", "sdk-0.2.1.3");
-        query.append_pair("osVersion", "34");
-        query.append_pair("device", "Android/Unknown");
-        if originator {
-            query.append_pair("tgt", "start");
-        }
+    set("version", "5");
+    set("capabilities", "3c02f");
+    set("platform", "ANDROID");
+    set("clientType", "ONE_ME");
+    set("appVersion", "sdk-0.2.1.3");
+    set("osVersion", "34");
+    set("device", "Android/Unknown");
+    if originator {
+        set("tgt", "start");
+    } else {
+        pairs.retain(|(key, _)| key != "tgt");
     }
-    if !originator {
-        let pairs: Vec<(String, String)> = url.query_pairs()
-            .filter(|(key, _)| key != "tgt")
-            .map(|(key, value)| (key.into_owned(), value.into_owned()))
-            .collect();
-        url.set_query(None);
-        if !pairs.is_empty() {
-            url.query_pairs_mut().extend_pairs(pairs);
-        }
+
+    url.set_query(None);
+    if !pairs.is_empty() {
+        url.query_pairs_mut().extend_pairs(pairs);
     }
     url.to_string()
 }
-
 macro_rules! delegate_cmd {
     ($name:ident($($arg:ident: $ty:ty),*) => $client_method:ident($($pass_arg:expr),*)) => {
         #[tauri::command]
