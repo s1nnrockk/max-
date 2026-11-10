@@ -303,6 +303,8 @@ pub fn run() {
             stores::messages::update_messages,
             stores::messages::mark_message_deleted,
             stores::messages::remove_message_from_storage,
+            stores::messages::mark_messages_deleted_batch,
+            stores::messages::remove_messages_from_storage_batch,
             stores::messages::clear_local_messages,
             stores::cache::get_cached_file,
             stores::cache::set_cached_file,
