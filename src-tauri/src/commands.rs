@@ -883,6 +883,15 @@ mod migration_tests {
     }
 
     #[test]
+    fn theme_resolution_prefers_saved_mode_and_falls_back_to_system() {
+        assert_eq!(resolve_theme_mode(Some("dark".into()), false), "dark");
+        assert_eq!(resolve_theme_mode(Some("light".into()), true), "light");
+        assert_eq!(resolve_theme_mode(None, true), "dark");
+        assert_eq!(resolve_theme_mode(None, false), "light");
+        assert_eq!(resolve_theme_mode(Some("unknown".into()), true), "dark");
+    }
+
+    #[test]
     fn reconnect_delay_starts_fast_and_caps_backoff() {
         assert_eq!(reconnect_delay_ms(0), 500);
         assert_eq!(reconnect_delay_ms(1), 1500);
