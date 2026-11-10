@@ -31,6 +31,61 @@ delegate_cmd!(check_call_status(track_id: String) => check_call_status(track_id)
 delegate_cmd!(auth_by_track(track_id: String) => auth_by_track(track_id));
 delegate_cmd!(logout() => logout());
 delegate_cmd!(fetch_contacts(user_ids: Vec<u64>) => fetch_contacts(user_ids));
+
+/// Fetch contacts in bounded batches. Chunking and response normalization live
+/// in Rust so the Svelte layer only updates its presentation stores.
+#[tauri::command]
+pub async fn fetch_contacts_batched(
+    state: State<'_, AppState>,
+    user_ids: Vec<u64>,
+) -> Result<Value, Value> {
+    let mut unique_ids = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for id in user_ids {
+        if id > 0 && seen.insert(id) {
+            unique_ids.push(id);
+        }
+    }
+
+    let mut contacts = Vec::new();
+    for (index, chunk) in unique_ids.chunks(50).enumerate() {
+        let response = state.client.fetch_contacts(chunk.to_vec()).await
+            .map_err(|error| error.to_json())?;
+
+        if let Some(items) = response.payload.get("contacts").and_then(Value::as_array) {
+            contacts.extend(items.iter().cloned().map(normalize_contact_value));
+        }
+
+        if (index + 1) * 50 < unique_ids.len() {
+            tokio::time::sleep(std::time::Duration::from_millis(60)).await;
+        }
+    }
+
+    Ok(json!({ "contacts": contacts }))
+}
+
+#[tauri::command]
+pub fn normalize_contacts(contacts: Vec<Value>) -> Vec<Value> {
+    contacts.into_iter().map(normalize_contact_value).collect()
+}
+
+fn normalize_contact_value(mut contact: Value) -> Value {
+    if let Some(object) = contact.as_object_mut() {
+        let avatar = object.get("baseRawUrl")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .or_else(|| object.get("baseUrl").and_then(Value::as_str))
+            .map(str::to_owned);
+
+        object.remove("baseRawUrl");
+        object.remove("baseUrl");
+        if let Some(url) = avatar {
+            object.insert("avatar".to_string(), Value::String(url));
+        }
+    }
+    contact
+}
+
 delegate_cmd!(get_by_phone(phone: String) => get_by_phone(phone));
 delegate_cmd!(add_contact(contact_id: u64, first_name: String) => add_contact(contact_id, first_name));
 delegate_cmd!(remove_contact(contact_id: u64) => delete_contact(contact_id));
