@@ -161,6 +161,7 @@ pub fn run() {
             commands::normalize_contacts,
             commands::sort_folders,
             commands::merge_read_message_state,
+            commands::reconnect_delay_ms,
             commands::fetch_history,
             commands::get_by_phone,
             commands::add_contact,
