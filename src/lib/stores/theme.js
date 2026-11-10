@@ -44,11 +44,14 @@ export async function initTheme() {
 
   const systemDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
 
-  let targetId = "light";
-  if (saved === "dark" || saved === "light") {
-    targetId = saved;
-  } else {
-    targetId = systemDark ? "dark" : "light";
+  let targetId = systemDark ? "dark" : "light";
+  try {
+    targetId = await invoke("resolve_theme_mode", {
+      saved: saved || null,
+      systemDark,
+    });
+  } catch (error) {
+    console.warn("Native theme resolver unavailable; using WebView fallback", error);
   }
 
   activeThemeId.set(targetId);
