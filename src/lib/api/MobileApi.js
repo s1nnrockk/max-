@@ -1953,21 +1953,19 @@ export default class MobileApi extends BaseAPI {
       console.error("read_message invoke error:", e);
     }
 
+    const chatStore = getChat(chatId);
+    const currentChat = chatStore.getInfo();
     let updatedChat = null;
-    getChat(chatId).chatInfo.update(chat => {
-      if (!chat) return chat;
-      const unread = response?.unread != null
-        ? Number(response.unread)
-        : (remainingCount != null ? Number(remainingCount) : chat.newMessages);
-      const mark = response?.mark != null ? Number(response.mark) : (markTime != null ? Number(markTime) : Date.now());
-      const myId = Number(get(currentUser));
-      const participants = { ...(chat.participants || {}), [myId]: mark };
-      updatedChat = { ...chat, newMessages: unread, participants };
-      return updatedChat;
-    });
-
-    if (updatedChat) {
-      await saveChats([ updatedChat ]).catch(() => {});
+    if (currentChat) {
+      updatedChat = await invoke("merge_read_message_state", {
+        chat: currentChat,
+        response,
+        remainingCount: remainingCount != null ? Number(remainingCount) : null,
+        markTime: markTime != null ? Number(markTime) : null,
+        userId: Number(get(currentUser)),
+      });
+      chatStore.chatInfo.set(updatedChat);
+      await saveChats([updatedChat]).catch(() => {});
     }
 
     return response;
