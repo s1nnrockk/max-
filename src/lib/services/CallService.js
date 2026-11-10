@@ -173,61 +173,8 @@ function labelLocalTracks(sdp, userId, cameraTrackId, screenTrackId) {
   return result;
 }
 
-function encodeDisplayLayout(trackKeys) {
-  const parts = [];
-  parts.push(0x94, 0x00, 0x00, 0x01, 0xc3);
-  if (!trackKeys.length) {
-    parts.push(0xc0);
-  } else {
-    const total = trackKeys.length * 2;
-    if (total < 16) {
-      parts.push(0x90 | total);
-    } else {
-      parts.push(0xdc, (total >> 8) & 0xff, total & 0xff);
-    }
-    for (const key of trackKeys) {
-      const keyBytes = new TextEncoder().encode(key);
-      if (keyBytes.length < 32) {
-        parts.push(0xa0 | keyBytes.length);
-      } else {
-        parts.push(0xd9, keyBytes.length);
-      }
-      for (let i = 0; i < keyBytes.length; i++) parts.push(keyBytes[i]);
-      parts.push(0x00, 0xc0, 0xcd, (640 >> 8) & 0xff, 640 & 0xff, 0xcd, (360 >> 8) & 0xff, 360 & 0xff, 0x00);
-    }
-  }
-  parts.push(0xc0);
-  return new Uint8Array(parts);
-}
-
 function sanitizeSdpBundle(sdp) {
   return sdp;
-}
-
-function extractVideoSlotMids(sdp) {
-  if (!sdp) return new Set();
-  const mids = new Set();
-  let kind = null;
-  let mid = null;
-  let recvOnly = false;
-  const flush = () => {
-    if (kind === 'video' && recvOnly && mid) mids.add(mid);
-  };
-  for (const raw of sdp.split(/\r?\n/)) {
-    const line = raw.trim();
-    if (line.startsWith('m=')) {
-      flush();
-      kind = line.substring(2).split(/\s+/)[0];
-      mid = null;
-      recvOnly = false;
-    } else if (line.startsWith('a=mid:')) {
-      mid = line.substring(6).trim();
-    } else if (line === 'a=recvonly') {
-      recvOnly = true;
-    }
-  }
-  flush();
-  return mids;
 }
 
 function getRTCPeerConnection() {
@@ -578,11 +525,11 @@ class MaxCallSession {
   }
 
   async #prepareVideoSlot(pc, offerSdp) {
-    const mids = extractVideoSlotMids(offerSdp);
+    const mids = await invoke('extract_video_slot_mids', { sdp: offerSdp });
     if (!mids || mids.size === 0 || !pc || typeof pc.getTransceivers !== 'function') return;
     const transceivers = pc.getTransceivers();
     for (const tr of transceivers) {
-      if (!mids.has(tr.mid)) continue;
+      if (!mids.includes(tr.mid)) continue;
       const isScreen = Boolean(get(activeCall).screenOn);
       const isVideo = Boolean(get(activeCall).videoOn);
       const track = (isScreen && this.#screenStream?.getVideoTracks()[0])
@@ -604,7 +551,7 @@ class MaxCallSession {
     }
   }
 
-  #sendSfuDisplayLayout() {
+  async #sendSfuDisplayLayout() {
     if (!this.#sfuCommandChannel || this.#sfuCommandChannel.readyState !== 'open') return;
     const participants = get(activeCall).participants || [];
     const keys = [];
@@ -614,8 +561,10 @@ class MaxCallSession {
       }
     }
     try {
-      const bytes = encodeDisplayLayout(keys);
-      this.#sfuCommandChannel.send(bytes);
+      const bytes = await invoke('encode_sfu_display_layout', { trackKeys: keys });
+      if (this.#sfuCommandChannel?.readyState === 'open') {
+        this.#sfuCommandChannel.send(new Uint8Array(bytes));
+      }
     } catch {}
   }
 
@@ -1075,7 +1024,7 @@ class MaxCallSession {
     if (dc.label === 'producerCommand') {
       this.#sfuCommandChannel = dc;
       dc.onopen = () => {
-        this.#sendSfuDisplayLayout();
+        void this.#sendSfuDisplayLayout();
       };
       return;
     }
@@ -1945,7 +1894,7 @@ class MaxCallSession {
         ...(ssrcs.length > 0 ? { ssrcs } : {}),
         ...(this.#sfuSessionId ? { sessionId: this.#sfuSessionId } : {}),
       });
-      this.#sendSfuDisplayLayout();
+      void this.#sendSfuDisplayLayout();
     } catch (err) {
       log('onProducerUpdated error:', err);
       patchCallState({ errorText: err?.message || String(err) });
@@ -2158,7 +2107,7 @@ class MaxCallSession {
           : p
       ),
     });
-    this.#sendSfuDisplayLayout();
+    void this.#sendSfuDisplayLayout();
   }
 
   #onParticipantJoined(msg) {
@@ -2178,7 +2127,7 @@ class MaxCallSession {
       this.#ws2PeerId = p.id;
     }
     this.#transmitPendingOffer();
-    this.#sendSfuDisplayLayout();
+    void this.#sendSfuDisplayLayout();
   }
 
   #onParticipantLeft(msg) {
@@ -2207,7 +2156,7 @@ class MaxCallSession {
       this.#ws2PeerId = peer.id;
       this.#transmitPendingOffer();
     }
-    this.#sendSfuDisplayLayout();
+    void this.#sendSfuDisplayLayout();
   }
 
   async #attemptIceRestart() {
@@ -2499,7 +2448,7 @@ class MaxCallSession {
           isAnimojiEnabled: false,
         },
       }).catch(() => {});
-      this.#sendSfuDisplayLayout();
+      void this.#sendSfuDisplayLayout();
     } finally {
       this.#cameraToggling = false;
     }
@@ -2675,7 +2624,7 @@ class MaxCallSession {
           isAnimojiEnabled: false,
         },
       }).catch(() => {});
-      this.#sendSfuDisplayLayout();
+      void this.#sendSfuDisplayLayout();
       return;
     }
     if (on && !this.#screenStream) {
@@ -2803,7 +2752,7 @@ class MaxCallSession {
         isAnimojiEnabled: false,
       },
     }).catch(() => {});
-    this.#sendSfuDisplayLayout();
+    void this.#sendSfuDisplayLayout();
   }
 
   async hangup() {
