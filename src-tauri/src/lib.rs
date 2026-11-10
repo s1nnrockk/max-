@@ -163,6 +163,7 @@ pub fn run() {
             commands::merge_read_message_state,
             commands::reconnect_delay_ms,
             commands::resolve_theme_mode,
+            commands::plugin_version_satisfies,
             commands::fetch_history,
             commands::get_by_phone,
             commands::add_contact,
