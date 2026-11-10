@@ -960,3 +960,89 @@ mod plugin_version_tests {
         ));
     }
 }
+
+
+/// Validate plugin manifests and archive file limits in the native core.
+#[tauri::command]
+pub fn validate_plugin_manifest(
+    manifest: Value,
+    file_sizes: HashMap<String, u64>,
+) -> Result<(), String> {
+    fn fail(code: &str, message: impl AsRef<str>) -> String {
+        format!("{}|{}", code, message.as_ref())
+    }
+    fn is_valid_id(value: &str) -> bool {
+        let mut chars = value.chars();
+        matches!(chars.next(), Some(c) if c.is_ascii_alphanumeric())
+            && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+    }
+
+    let object = manifest.as_object()
+        .ok_or_else(|| fail("MISSING_MANIFEST", "manifest.json is missing or invalid"))?;
+    let id = object.get("id").and_then(Value::as_str).unwrap_or("");
+    if !is_valid_id(id) {
+        return Err(fail("INVALID_ID", "Plugin id must match reverse.domain.style format"));
+    }
+    if object.get("name").and_then(Value::as_str).filter(|s| !s.is_empty()).is_none() {
+        return Err(fail("INVALID_MANIFEST", "Plugin name is required"));
+    }
+    if object.get("version").and_then(Value::as_str).filter(|s| !s.is_empty()).is_none() {
+        return Err(fail("INVALID_MANIFEST", "Plugin version is required"));
+    }
+    let entry = object.get("entry").and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| fail("INVALID_MANIFEST", "Plugin entry script path is required"))?;
+    if !file_sizes.contains_key(entry) {
+        return Err(fail("MISSING_ENTRY_SCRIPT", format!("Entry script \"{}\" not found in archive", entry)));
+    }
+
+    const PERMISSIONS: &[&str] = &[
+        "ui:mount", "ui:style", "stores:read", "stores:write", "api:call",
+        "network", "crypto", "tauri", "storage", "events", "media",
+    ];
+    if let Some(permissions) = object.get("permissions").and_then(Value::as_array) {
+        for permission in permissions {
+            let value = permission.as_str().unwrap_or("");
+            if !PERMISSIONS.contains(&value) {
+                return Err(fail("UNKNOWN_PERMISSION", format!("Unknown permission: \"{}\"", value)));
+            }
+        }
+    }
+
+    if let Some(styles) = object.get("styles").and_then(Value::as_array) {
+        for style in styles {
+            let path = style.as_str().or_else(|| style.get("path").and_then(Value::as_str)).unwrap_or("");
+            if !file_sizes.contains_key(path) {
+                return Err(fail("MISSING_FILE", format!("Style file \"{}\" not found in archive", path)));
+            }
+        }
+    }
+
+    const MOUNT_POINTS: &[&str] = &[
+        "panel:tab", "panel:tab-content", "nav:top", "nav:item", "nav:bottom",
+        "chat-list:header", "chat-item:leading", "chat-item:badge", "chat-item:trailing",
+        "chat:header-leading", "chat:header-action", "chat:header-info", "chat:footer",
+        "chat:background", "message:header", "message:footer", "message:decoration",
+        "message:context-item", "input:action", "input:action-left", "input:action-right",
+        "input:toolbar", "input:toolbar-action", "input:context-item", "sticker-panel:tab",
+        "sticker-panel:tab-content", "call:action", "call:panel", "call:video-overlay",
+        "settings:section", "settings:page", "sidebar:section", "notification:action",
+        "global:style", "global:init", "global:overlay", "global:modal",
+    ];
+    if let Some(components) = object.get("components").and_then(Value::as_array) {
+        for component in components {
+            if let Some(mount) = component.get("mountPoint").and_then(Value::as_str) {
+                if !MOUNT_POINTS.contains(&mount) {
+                    return Err(fail("UNKNOWN_MOUNT_POINT", format!("Unknown mount point: \"{}\"", mount)));
+                }
+            }
+        }
+    }
+
+    for (path, size) in file_sizes {
+        if size > 131_072 {
+            return Err(fail("SIZE_EXCEEDED", format!("File \"{}\" exceeds 128 KB limit", path)));
+        }
+    }
+    Ok(())
+}
