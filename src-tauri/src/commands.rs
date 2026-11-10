@@ -120,9 +120,9 @@ pub fn label_call_sdp_tracks(
         let escaped = regex::escape(&track_id);
         let label = format!("{}:{}", prefix, suffix);
         let replacements = [
-            (format!(r"(?m)^a=msid:(\\S+) {}\\s*$", escaped), format!("a=msid:$1 {}", label)),
-            (format!(r"(?m)^(a=ssrc:\\d+ msid:\\S+) {}\\s*$", escaped), format!("$1 {}", label)),
-            (format!(r"(?m)^(a=ssrc:\\d+ label:){}\\s*$", escaped), format!("$1{}", label)),
+            (format!(r"(?m)^a=msid:(\S+) {}\s*$", escaped), format!("a=msid:$1 {}", label)),
+            (format!(r"(?m)^(a=ssrc:\d+ msid:\S+) {}\s*$", escaped), format!("$1 {}", label)),
+            (format!(r"(?m)^(a=ssrc:\d+ label:){}\s*$", escaped), format!("$1{}", label)),
         ];
         for (pattern, replacement) in replacements {
             if let Ok(re) = regex::Regex::new(&pattern) {
@@ -133,8 +133,8 @@ pub fn label_call_sdp_tracks(
         if !result.contains(&label) {
             let mut in_video = false;
             let mut lines = Vec::new();
-            for raw in result.split_inclusive('\\n') {
-                let line = raw.trim_end_matches('\\n');
+            for raw in result.split_inclusive('\n') {
+                let line = raw.trim_end_matches('\n');
                 if line.starts_with("m=") {
                     in_video = line.starts_with("m=video");
                     lines.push(raw.to_string());
@@ -142,24 +142,24 @@ pub fn label_call_sdp_tracks(
                 }
                 let mut updated = line.to_string();
                 if in_video {
-                    if let Ok(re) = regex::Regex::new(r"^a=msid:(\\S+)\\s+\\S+") {
+                    if let Ok(re) = regex::Regex::new(r"^a=msid:(\S+)\s+\S+") {
                         if re.is_match(&updated) {
                             updated = re.replace(&updated, format!("a=msid:$1 {}", label)).into_owned();
                         }
                     }
-                    if let Ok(re) = regex::Regex::new(r"^(a=ssrc:\\d+\\s+msid:\\S+)\\s+\\S+") {
+                    if let Ok(re) = regex::Regex::new(r"^(a=ssrc:\d+\s+msid:\S+)\s+\S+") {
                         if re.is_match(&updated) {
                             updated = re.replace(&updated, format!("$1 {}", label)).into_owned();
                         }
                     }
-                    if let Ok(re) = regex::Regex::new(r"^(a=ssrc:\\d+\\s+label:)\\S+") {
+                    if let Ok(re) = regex::Regex::new(r"^(a=ssrc:\d+\s+label:)\S+") {
                         if re.is_match(&updated) {
                             updated = re.replace(&updated, format!("$1{}", label)).into_owned();
                         }
                     }
                 }
-                if line.ends_with('\\r') && !updated.ends_with('\\r') {
-                    updated.push('\\r');
+                if line.ends_with('\r') && !updated.ends_with('\r') {
+                    updated.push('\r');
                 }
                 updated.push_str(&raw[line.len()..]);
                 lines.push(updated);
@@ -173,7 +173,7 @@ pub fn label_call_sdp_tracks(
 /// Extract unique SSRC identifiers from SDP.
 #[tauri::command]
 pub fn extract_call_ssrcs(sdp: String) -> Vec<String> {
-    let re = regex::Regex::new(r"(?m)^a=ssrc:(\\d+)").expect("static SSRC regex");
+    let re = regex::Regex::new(r"(?m)^a=ssrc:(\d+)").expect("static SSRC regex");
     let mut seen = std::collections::HashSet::new();
     let mut values = Vec::new();
     for capture in re.captures_iter(&sdp) {
