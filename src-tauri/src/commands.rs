@@ -256,18 +256,19 @@ pub fn normalize_call_participant(raw: Value) -> Value {
     }
 
     let id = raw.get("id");
-    let id_external = id.and_then(|value| value.get("external")).cloned()
-        .or_else(|| id.filter(|value| value.is_string() || value.is_number()).cloned());
-    let id_internal = id.and_then(|value| value.get("internal")).cloned()
-        .or_else(|| id.filter(|value| value.is_string() || value.is_number()).cloned());
+    let nested_external = id.and_then(|value| value.get("external")).cloned();
+    let nested_internal = id.and_then(|value| value.get("internal")).cloned();
+    let flat_id = id.filter(|value| value.is_string() || value.is_number()).cloned();
     let external = first_truthy(vec![
-        id_external,
+        nested_external,
         raw.get("externalId").cloned(),
         raw.get("userId").cloned(),
+        flat_id.clone(),
     ]);
     let internal = first_truthy(vec![
-        id_internal,
+        nested_internal,
         raw.get("internalId").cloned(),
+        flat_id,
     ]);
     let external_id = scalar_string(external.clone());
     let internal_id = scalar_string(internal);
