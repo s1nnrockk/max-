@@ -929,7 +929,10 @@ export default class MobileApi extends BaseAPI {
       console.log('Set chats for telemetry', telemetrySetupResp);
 
       if (config?.chatFolders?.FOLDERS) {
-        const sorted = sortFolders(config.chatFolders.FOLDERS, config.chatFolders.foldersOrder || []);
+        const sorted = await invoke("sort_folders", {
+          folders: config.chatFolders.FOLDERS,
+          order: config.chatFolders.foldersOrder || [],
+        });
         currentFolders.set(sorted);
       } else {
         this.getFolders().catch(() => {});
