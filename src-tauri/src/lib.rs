@@ -163,6 +163,8 @@ pub fn run() {
             commands::merge_read_message_state,
             commands::reconnect_delay_ms,
             commands::resolve_theme_mode,
+            commands::extract_video_slot_mids,
+            commands::encode_sfu_display_layout,
             commands::plugin_version_satisfies,
             commands::validate_plugin_manifest,
             commands::fetch_history,
