@@ -57,13 +57,8 @@ function base64ToBytes(b64) {
   return bytes;
 }
 
-const WS2_VERSION = '5';
 const WS2_CAPABILITIES = '3c02f';
-const INTERNAL_PARAMS_PLATFORM = 'ANDROID';
-const INTERNAL_PARAMS_SDK = '0.2.1.3';
 const CLIENT_APP_KEY = 'CGPGAGLGDIHBABABA';
-const DEFAULT_OS_VERSION = '34';
-const DEFAULT_DEVICE = 'Android/Unknown';
 
 const OFFER_CONSTRAINTS = {
   offerToReceiveAudio: true,
@@ -112,65 +107,6 @@ function _sanitizeLogArg(val, seen = new WeakSet()) {
 function log(...args) {
   const sanitized = args.map(arg => _sanitizeLogArg(arg));
   console.log('[call]', ...sanitized);
-}
-
-function labelLocalTracks(sdp, userId, cameraTrackId, screenTrackId) {
-  if (!sdp || !userId) return sdp;
-  const prefix = `u${userId}`;
-  let result = sdp;
-  if (cameraTrackId) {
-    const escaped = cameraTrackId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    result = result
-      .replace(new RegExp(`^a=msid:(\\S+) ${escaped}\\s*$`, 'gm'), `a=msid:$1 ${prefix}:sCAMERA`)
-      .replace(new RegExp(`^(a=ssrc:\\d+ msid:\\S+) ${escaped}\\s*$`, 'gm'), `$1 ${prefix}:sCAMERA`)
-      .replace(new RegExp(`^(a=ssrc:\\d+ label:)${escaped}\\s*$`, 'gm'), `$1${prefix}:sCAMERA`);
-    if (!result.includes(`${prefix}:sCAMERA`)) {
-      const lines = result.split('\n');
-      let inVideo = false;
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
-        if (line.startsWith('m=')) {
-          inVideo = line.startsWith('m=video');
-        } else if (inVideo) {
-          if (line.startsWith('a=msid:')) {
-            lines[i] = line.replace(/^a=msid:(\S+)\s+\S+/, `a=msid:$1 ${prefix}:sCAMERA`);
-          } else if (line.startsWith('a=ssrc:') && line.includes(' msid:')) {
-            lines[i] = line.replace(/^(a=ssrc:\d+\s+msid:\S+)\s+\S+/, `$1 ${prefix}:sCAMERA`);
-          } else if (line.startsWith('a=ssrc:') && line.includes(' label:')) {
-            lines[i] = line.replace(/^(a=ssrc:\d+\s+label:)\S+/, `$1${prefix}:sCAMERA`);
-          }
-        }
-      }
-      result = lines.join('\n');
-    }
-  }
-  if (screenTrackId) {
-    const escaped = screenTrackId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    result = result
-      .replace(new RegExp(`^a=msid:(\\S+) ${escaped}\\s*$`, 'gm'), `a=msid:$1 ${prefix}:sSCREEN`)
-      .replace(new RegExp(`^(a=ssrc:\\d+ msid:\\S+) ${escaped}\\s*$`, 'gm'), `$1 ${prefix}:sSCREEN`)
-      .replace(new RegExp(`^(a=ssrc:\\d+ label:)${escaped}\\s*$`, 'gm'), `$1${prefix}:sSCREEN`);
-    if (!result.includes(`${prefix}:sSCREEN`)) {
-      const lines = result.split('\n');
-      let inVideo = false;
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
-        if (line.startsWith('m=')) {
-          inVideo = line.startsWith('m=video');
-        } else if (inVideo) {
-          if (line.startsWith('a=msid:')) {
-            lines[i] = line.replace(/^a=msid:(\S+)\s+\S+/, `a=msid:$1 ${prefix}:sSCREEN`);
-          } else if (line.startsWith('a=ssrc:') && line.includes(' msid:')) {
-            lines[i] = line.replace(/^(a=ssrc:\d+\s+msid:\S+)\s+\S+/, `$1 ${prefix}:sSCREEN`);
-          } else if (line.startsWith('a=ssrc:') && line.includes(' label:')) {
-            lines[i] = line.replace(/^(a=ssrc:\d+\s+label:)\S+/, `$1${prefix}:sSCREEN`);
-          }
-        }
-      }
-      result = lines.join('\n');
-    }
-  }
-  return result;
 }
 
 function sanitizeSdpBundle(sdp) {
