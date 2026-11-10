@@ -21,8 +21,45 @@ macro_rules! delegate_cmd {
     };
 }
 
-delegate_cmd!(start_auth(phone: String) => start_auth(phone));
-delegate_cmd!(resend_auth(phone: String) => resend_auth(phone));
+#[tauri::command]
+pub async fn start_auth(state: State<'_, AppState>, phone: String) -> Result<Value, Value> {
+    let response = state.client.start_auth(phone).await.map_err(|error| error.to_json())?;
+    Ok(normalize_auth_response(response.payload))
+}
+
+#[tauri::command]
+pub async fn resend_auth(state: State<'_, AppState>, phone: String) -> Result<Value, Value> {
+    let response = state.client.resend_auth(phone).await.map_err(|error| error.to_json())?;
+    Ok(normalize_auth_response(response.payload))
+}
+
+fn normalize_auth_response(mut auth: Value) -> Value {
+    let token_exists = match auth.get("token") {
+        Some(Value::String(token)) => !token.is_empty(),
+        Some(Value::Number(number)) => number.as_f64().unwrap_or(0.0) != 0.0,
+        Some(Value::Bool(value)) => *value,
+        Some(Value::Object(_)) | Some(Value::Array(_)) => true,
+        _ => false,
+    };
+
+    if !token_exists {
+        return auth;
+    }
+
+    let existing_delay = auth.get("codeDelay").and_then(Value::as_f64)
+        .filter(|delay| *delay != 0.0);
+    let fallback_delay = auth.get("altActionDuration").and_then(Value::as_f64)
+        .filter(|duration| *duration != 0.0)
+        .map(|duration| (duration / 1000.0).round())
+        .unwrap_or(60.0);
+    let code_delay = existing_delay.unwrap_or(fallback_delay);
+
+    if let Some(object) = auth.as_object_mut() {
+        object.insert("success".to_string(), Value::Bool(true));
+        object.insert("codeDelay".to_string(), json!(code_delay));
+    }
+    auth
+}
 delegate_cmd!(check_code(code: String) => check_code(code));
 delegate_cmd!(check_password(password: String, track_id: String) => check_password(password, track_id));
 delegate_cmd!(register(first_name: String, last_name: Option<String>) => submit_register(first_name, last_name));
