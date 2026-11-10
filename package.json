@@ -1,7 +1,7 @@
 {
-  "name": "maxplus",
-  "version": "0.1.8",
-  "description": "",
+  "name": "maxplusplus",
+  "version": "0.2.0",
+  "description": "MAX++ — community MAX client",
   "type": "module",
   "scripts": {
     "prepare": "svelte-kit sync",
