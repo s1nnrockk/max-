@@ -32,6 +32,73 @@ pub fn reconnect_delay_ms(attempt: u32) -> u64 {
     delay.min(10_000.0) as u64
 }
 
+
+/// Parse recv-only video media sections from an SDP offer in the native core.
+#[tauri::command]
+pub fn extract_video_slot_mids(sdp: String) -> Vec<String> {
+    let mut mids = Vec::new();
+    let mut kind: Option<&str> = None;
+    let mut mid: Option<String> = None;
+    let mut recv_only = false;
+
+    let flush = |kind: Option<&str>, mid: &Option<String>, recv_only: bool, mids: &mut Vec<String>| {
+        if kind == Some("video") && recv_only {
+            if let Some(value) = mid.as_ref().filter(|value| !value.is_empty()) {
+                if !mids.contains(value) {
+                    mids.push(value.clone());
+                }
+            }
+        }
+    };
+
+    for raw in sdp.lines() {
+        let line = raw.trim();
+        if let Some(media) = line.strip_prefix("m=") {
+            flush(kind, &mid, recv_only, &mut mids);
+            kind = media.split_whitespace().next();
+            mid = None;
+            recv_only = false;
+        } else if let Some(value) = line.strip_prefix("a=mid:") {
+            mid = Some(value.trim().to_string());
+        } else if line == "a=recvonly" {
+            recv_only = true;
+        }
+    }
+    flush(kind, &mid, recv_only, &mut mids);
+    mids
+}
+
+/// Encode the SFU display-layout payload natively; WebView only sends the bytes.
+#[tauri::command]
+pub fn encode_sfu_display_layout(track_keys: Vec<String>) -> Vec<u8> {
+    let mut parts = vec![0x94, 0x00, 0x00, 0x01, 0xc3];
+    if track_keys.is_empty() {
+        parts.push(0xc0);
+    } else {
+        let total = track_keys.len() * 2;
+        if total < 16 {
+            parts.push(0x90 | total as u8);
+        } else {
+            parts.push(0xdc);
+            parts.push(((total >> 8) & 0xff) as u8);
+            parts.push((total & 0xff) as u8);
+        }
+        for key in track_keys {
+            let key_bytes = key.as_bytes();
+            if key_bytes.len() < 32 {
+                parts.push(0xa0 | key_bytes.len() as u8);
+            } else {
+                parts.push(0xd9);
+                parts.push(key_bytes.len() as u8);
+            }
+            parts.extend_from_slice(key_bytes);
+            parts.extend_from_slice(&[0x00, 0xc0, 0xcd, 0x02, 0x80, 0xcd, 0x01, 0x68, 0x00]);
+        }
+    }
+    parts.push(0xc0);
+    parts
+}
+
 macro_rules! delegate_cmd {
     ($name:ident($($arg:ident: $ty:ty),*) => $client_method:ident($($pass_arg:expr),*)) => {
         #[tauri::command]
@@ -1045,4 +1112,25 @@ pub fn validate_plugin_manifest(
         }
     }
     Ok(())
+}
+
+
+#[cfg(test)]
+mod call_payload_tests {
+    use super::{encode_sfu_display_layout, extract_video_slot_mids};
+
+    #[test]
+    fn extracts_only_recv_only_video_mids() {
+        let sdp = "v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=mid:0\r\na=recvonly\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\na=mid:1\r\na=sendrecv\r\nm=video 9 UDP/TLS/RTP/SAVPF 97\r\na=mid:2\r\na=recvonly\r\n";
+        assert_eq!(extract_video_slot_mids(sdp.into()), vec!["2"]);
+    }
+
+    #[test]
+    fn encodes_empty_and_single_track_layouts() {
+        assert_eq!(encode_sfu_display_layout(vec![]), vec![0x94, 0, 0, 1, 0xc3, 0xc0, 0xc0]);
+        assert_eq!(
+            encode_sfu_display_layout(vec!["u7:sCAMERA".into()]),
+            vec![0x94, 0, 0, 1, 0xc3, 0x92, 0xaa, b'u', b'7', b':', b's', b'C', b'A', b'M', b'E', b'R', b'A', 0, 0xc0, 0xcd, 0x02, 0x80, 0xcd, 0x01, 0x68, 0, 0xc0]
+        );
+    }
 }
