@@ -748,3 +748,43 @@ pub async fn two_factor(
     }
     Ok(payload)
 }
+
+
+#[cfg(test)]
+mod migration_tests {
+    use super::*;
+
+    #[test]
+    fn folder_sort_preserves_requested_order_and_stable_remainder() {
+        let folders = vec![
+            json!({"id": 1, "name": "one"}),
+            json!({"id": 2, "name": "two"}),
+            json!({"id": 3, "name": "three"}),
+        ];
+        let sorted = sort_folders(folders, vec![json!(3), json!(1)]);
+        let ids: Vec<u64> = sorted.iter()
+            .map(|folder| folder["id"].as_u64().unwrap())
+            .collect();
+        assert_eq!(ids, vec![3, 1, 2]);
+    }
+
+    #[test]
+    fn auth_response_adds_success_and_fallback_code_delay() {
+        let response = normalize_auth_response(json!({
+            "token": "session-token",
+            "altActionDuration": 45000
+        }));
+        assert_eq!(response["success"], true);
+        assert_eq!(response["codeDelay"], 45);
+    }
+
+    #[test]
+    fn auth_response_preserves_existing_code_delay() {
+        let response = normalize_auth_response(json!({
+            "token": "session-token",
+            "codeDelay": 30,
+            "altActionDuration": 45000
+        }));
+        assert_eq!(response["codeDelay"], 30);
+    }
+}
