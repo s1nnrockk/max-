@@ -99,6 +99,132 @@ pub fn encode_sfu_display_layout(track_keys: Vec<String>) -> Vec<u8> {
     parts
 }
 
+
+/// Apply MAX call-track labels to local SDP in the native core.
+#[tauri::command]
+pub fn label_call_sdp_tracks(
+    sdp: String,
+    user_id: Option<String>,
+    camera_track_id: Option<String>,
+    screen_track_id: Option<String>,
+) -> String {
+    let Some(user_id) = user_id.filter(|value| !value.is_empty()) else { return sdp; };
+    let prefix = format!("u{}", user_id);
+    let mut result = sdp;
+
+    for (track_id, suffix) in [
+        (camera_track_id, "sCAMERA"),
+        (screen_track_id, "sSCREEN"),
+    ] {
+        let Some(track_id) = track_id.filter(|value| !value.is_empty()) else { continue; };
+        let escaped = regex::escape(&track_id);
+        let label = format!("{}:{}", prefix, suffix);
+        let replacements = [
+            (format!(r"(?m)^a=msid:(\\S+) {}\\s*$", escaped), format!("a=msid:$1 {}", label)),
+            (format!(r"(?m)^(a=ssrc:\\d+ msid:\\S+) {}\\s*$", escaped), format!("$1 {}", label)),
+            (format!(r"(?m)^(a=ssrc:\\d+ label:){}\\s*$", escaped), format!("$1{}", label)),
+        ];
+        for (pattern, replacement) in replacements {
+            if let Ok(re) = regex::Regex::new(&pattern) {
+                result = re.replace_all(&result, replacement.as_str()).into_owned();
+            }
+        }
+
+        if !result.contains(&label) {
+            let mut in_video = false;
+            let mut lines = Vec::new();
+            for raw in result.split_inclusive('\\n') {
+                let line = raw.trim_end_matches('\\n');
+                if line.starts_with("m=") {
+                    in_video = line.starts_with("m=video");
+                    lines.push(raw.to_string());
+                    continue;
+                }
+                let mut updated = line.to_string();
+                if in_video {
+                    if let Ok(re) = regex::Regex::new(r"^a=msid:(\\S+)\\s+\\S+") {
+                        if re.is_match(&updated) {
+                            updated = re.replace(&updated, format!("a=msid:$1 {}", label)).into_owned();
+                        }
+                    }
+                    if let Ok(re) = regex::Regex::new(r"^(a=ssrc:\\d+\\s+msid:\\S+)\\s+\\S+") {
+                        if re.is_match(&updated) {
+                            updated = re.replace(&updated, format!("$1 {}", label)).into_owned();
+                        }
+                    }
+                    if let Ok(re) = regex::Regex::new(r"^(a=ssrc:\\d+\\s+label:)\\S+") {
+                        if re.is_match(&updated) {
+                            updated = re.replace(&updated, format!("$1{}", label)).into_owned();
+                        }
+                    }
+                }
+                if line.ends_with('\\r') && !updated.ends_with('\\r') {
+                    updated.push('\\r');
+                }
+                updated.push_str(&raw[line.len()..]);
+                lines.push(updated);
+            }
+            result = lines.concat();
+        }
+    }
+    result
+}
+
+/// Extract unique SSRC identifiers from SDP.
+#[tauri::command]
+pub fn extract_call_ssrcs(sdp: String) -> Vec<String> {
+    let re = regex::Regex::new(r"(?m)^a=ssrc:(\\d+)").expect("static SSRC regex");
+    let mut seen = std::collections::HashSet::new();
+    let mut values = Vec::new();
+    for capture in re.captures_iter(&sdp) {
+        if let Some(value) = capture.get(1).map(|m| m.as_str()) {
+            if seen.insert(value.to_string()) {
+                values.push(value.to_string());
+            }
+        }
+    }
+    values
+}
+
+/// Build the call signalling WebSocket URL in Rust.
+#[tauri::command]
+pub fn build_call_ws2_url(
+    endpoint: String,
+    user_id: Option<String>,
+    originator: bool,
+) -> String {
+    let Ok(mut url) = url::Url::parse(&endpoint) else { return endpoint; };
+    if let Some(user_id) = user_id.filter(|value| !value.is_empty()) {
+        if !url.query_pairs().any(|(key, _)| key == "userId") {
+            url.query_pairs_mut().append_pair("userId", &user_id);
+        }
+    }
+    {
+        let mut query = url.query_pairs_mut();
+        query.append_pair("version", "5");
+        query.append_pair("capabilities", "3c02f");
+        query.append_pair("platform", "ANDROID");
+        query.append_pair("clientType", "ONE_ME");
+        query.append_pair("appVersion", "sdk-0.2.1.3");
+        query.append_pair("osVersion", "34");
+        query.append_pair("device", "Android/Unknown");
+        if originator {
+            query.append_pair("tgt", "start");
+        }
+    }
+    if !originator {
+        let pairs: Vec<(String, String)> = url.query_pairs()
+            .filter(|(key, _)| key != "tgt")
+            .map(|(key, value)| (key.into_owned(), value.into_owned()))
+            .collect();
+        url.set_query(None);
+        if !pairs.is_empty() {
+            url.query_pairs_mut().extend_pairs(pairs);
+        }
+    }
+    url.to_string()
+}
+
 macro_rules! delegate_cmd {
     ($name:ident($($arg:ident: $ty:ty),*) => $client_method:ident($($pass_arg:expr),*)) => {
         #[tauri::command]
@@ -1132,5 +1258,40 @@ mod call_payload_tests {
             encode_sfu_display_layout(vec!["u7:sCAMERA".into()]),
             vec![0x94, 0, 0, 1, 0xc3, 0x92, 0xaa, b'u', b'7', b':', b's', b'C', b'A', b'M', b'E', b'R', b'A', 0, 0xc0, 0xcd, 0x02, 0x80, 0xcd, 0x01, 0x68, 0, 0xc0]
         );
+    }
+}
+
+
+#[cfg(test)]
+mod call_sdp_url_tests {
+    use super::{build_call_ws2_url, extract_call_ssrcs, label_call_sdp_tracks};
+
+    #[test]
+    fn labels_camera_and_screen_tracks_in_sdp() {
+        let sdp = "v=0\\r\\nm=video 9 UDP/TLS/RTP/SAVPF 96\\r\\na=msid:stream cam-id\\r\\na=ssrc:123 msid:stream cam-id\\r\\nm=video 9 UDP/TLS/RTP/SAVPF 97\\r\\na=msid:stream screen-id\\r\\n";
+        let result = label_call_sdp_tracks(
+            sdp.into(), Some("42".into()), Some("cam-id".into()), Some("screen-id".into())
+        );
+        assert!(result.contains("u42:sCAMERA"));
+        assert!(result.contains("u42:sSCREEN"));
+        assert!(result.contains("a=ssrc:123 msid:stream u42:sCAMERA"));
+    }
+
+    #[test]
+    fn extracts_unique_ssrcs_in_order() {
+        let sdp = "a=ssrc:123 cname:x\\na=ssrc:456 cname:y\\na=ssrc:123 msid:x\\n";
+        assert_eq!(extract_call_ssrcs(sdp.into()), vec!["123", "456"]);
+    }
+
+    #[test]
+    fn builds_ws_url_and_removes_tgt_for_answerer() {
+        let url = build_call_ws2_url(
+            "wss://example.test/call?foo=bar&tgt=old".into(), Some("42".into()), false
+        );
+        let parsed = url::Url::parse(&url).unwrap();
+        let pairs: std::collections::HashMap<_, _> = parsed.query_pairs().into_owned().collect();
+        assert_eq!(pairs.get("userId").map(String::as_str), Some("42"));
+        assert_eq!(pairs.get("version").map(String::as_str), Some("5"));
+        assert!(!pairs.contains_key("tgt"));
     }
 }
