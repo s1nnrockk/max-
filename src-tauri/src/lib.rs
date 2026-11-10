@@ -1,3 +1,4 @@
+mod app_core;
 mod proxy_auth;
 mod commands;
 mod crypto;
@@ -128,6 +129,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            app_core::app_core_info,
             commands::ext_api_request,
             commands::get_system_trace_info,
             commands::get_video_secret,
