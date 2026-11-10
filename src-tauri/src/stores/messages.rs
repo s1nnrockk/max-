@@ -599,6 +599,41 @@ pub fn remove_message_from_storage_sync(
     })
 }
 
+
+#[tauri::command]
+pub async fn mark_messages_deleted_batch(
+    app: AppHandle,
+    account: u64,
+    chat_id: i64,
+    message_ids: Vec<String>,
+) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        for message_id in message_ids {
+            mark_message_deleted_sync(&app, account, chat_id, &message_id)?;
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn remove_messages_from_storage_batch(
+    app: AppHandle,
+    account: u64,
+    chat_id: i64,
+    message_ids: Vec<String>,
+) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        for message_id in message_ids {
+            remove_message_from_storage_sync(&app, account, chat_id, &message_id)?;
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 pub async fn remove_message_from_storage(
     app: AppHandle,
