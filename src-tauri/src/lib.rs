@@ -157,6 +157,8 @@ pub fn run() {
             commands::get_detailed_reactions,
             commands::set_token,
             commands::fetch_contacts,
+            commands::fetch_contacts_batched,
+            commands::normalize_contacts,
             commands::fetch_history,
             commands::get_by_phone,
             commands::add_contact,
