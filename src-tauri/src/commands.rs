@@ -11,6 +11,16 @@ fn p(s: String) -> Result<u64, Value> {
     s.parse().map_err(|_| Error::Other("Invalid ID".into()).to_json())
 }
 
+/// Calculate the bounded reconnect delay in the native core.
+#[tauri::command]
+pub fn reconnect_delay_ms(attempt: u32) -> u64 {
+    if attempt == 0 {
+        return 500;
+    }
+    let delay = 1000.0_f64 * 1.5_f64.powi(attempt.min(32) as i32);
+    delay.min(10_000.0) as u64
+}
+
 macro_rules! delegate_cmd {
     ($name:ident($($arg:ident: $ty:ty),*) => $client_method:ident($($pass_arg:expr),*)) => {
         #[tauri::command]
