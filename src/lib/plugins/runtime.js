@@ -16,7 +16,7 @@ async function parseMxp(arrayBuffer) {
   const files = new Map(Object.entries(result.files));
   const manifest = result.manifest;
 
-  validateManifest(manifest, files);
+  await validateManifest(manifest, files);
 
   return { manifest, files };
 }
