@@ -317,21 +317,8 @@ class VoiceChannel {
   }
 }
 
-function parseParticipant(raw) {
-  const externalId = raw.id?.external || raw.externalId || raw.userId || (typeof raw.id === 'string' || typeof raw.id === 'number' ? raw.id : null);
-  const internalId = raw.id?.internal || raw.internalId || (typeof raw.id === 'string' || typeof raw.id === 'number' ? raw.id : null);
-  const effectiveId = String(externalId || internalId || '');
-  return {
-    id: effectiveId,
-    internalId: internalId ? String(internalId) : null,
-    externalId: externalId ? String(externalId) : null,
-    name: raw.name || raw.displayName || raw.firstName || '',
-    avatar: raw.avatarUrl || raw.photo || raw.avatar || null,
-    muted: raw.isAudioEnabled === false || raw.isMicrophoneEnabled === false,
-    videoOn: Boolean(raw.isVideoEnabled),
-    screenOn: Boolean(raw.isScreenSharingEnabled),
-    speaking: false,
-  };
+async function parseParticipant(raw) {
+  return invoke('normalize_call_participant', { raw });
 }
 
 function waitForFirstFrame(stream, timeoutMs = 700) {
@@ -1142,12 +1129,12 @@ class MaxCallSession {
     ch.on('media-settings-changed', (msg) => this.#onPeerMedia(msg));
     ch.on('topology-changed', (msg) => this.#onTopologyChanged(msg));
 
-    ch.on('participant-joined', (msg) => this.#onParticipantJoined(msg));
-    ch.on('participant-added', (msg) => this.#onParticipantJoined(msg));
+    ch.on('participant-joined', (msg) => { void this.#onParticipantJoined(msg).catch(err => log('participant-joined normalization failed:', err)); });
+    ch.on('participant-added', (msg) => { void this.#onParticipantJoined(msg).catch(err => log('participant-added normalization failed:', err)); });
     ch.on('participant-left', (msg) => this.#onParticipantLeft(msg));
     ch.on('participant-removed', (msg) => this.#onParticipantLeft(msg));
-    ch.on('session-state', (msg) => this.#onSessionState(msg));
-    ch.on('participants-state-changed', (msg) => this.#onSessionState(msg));
+    ch.on('session-state', (msg) => { void this.#onSessionState(msg).catch(err => log('session-state normalization failed:', err)); });
+    ch.on('participants-state-changed', (msg) => { void this.#onSessionState(msg).catch(err => log('participants-state normalization failed:', err)); });
   }
 
   #onRegisteredPeer(msg) {
@@ -1615,12 +1602,12 @@ class MaxCallSession {
       const myId = String(this.#myCallUserId || '');
 
       if (Array.isArray(conversation.participants)) {
-        const roster = conversation.participants
+        const roster = await Promise.all(conversation.participants
           .filter(p => {
             const pid = String(p.userId || p.id || '');
             return pid && pid !== myId;
           })
-          .map(parseParticipant);
+          .map(parseParticipant));
         patchCallState({ participants: roster, roomName: conversation.name || conversation.title || null });
         const remoteP = conversation.participants.find(p => {
           const pid = String(p.userId || p.id || '');
@@ -2029,10 +2016,10 @@ class MaxCallSession {
     void this.#sendSfuDisplayLayout();
   }
 
-  #onParticipantJoined(msg) {
+  async #onParticipantJoined(msg) {
     const raw = msg.participant || msg;
     if (!raw) return;
-    const p = parseParticipant(raw);
+    const p = await parseParticipant(raw);
     const myId = String(this.#myCallUserId || '');
     if (!p.id || p.id === myId) return;
     log('Participant joined room:', p.name, p.id);
@@ -2062,13 +2049,13 @@ class MaxCallSession {
     }
   }
 
-  #onSessionState(msg) {
+  async #onSessionState(msg) {
     const list = msg.participants || msg.sessionParticipants || [];
     if (!list.length) return;
     const myId = String(this.#myCallUserId || '');
-    const roster = list
+    const roster = await Promise.all(list
       .filter(p => String(p.userId || p.id) !== myId)
-      .map(parseParticipant);
+      .map(parseParticipant));
     patchCallState({ participants: roster });
     const peer = roster.find(p => p.id && p.id !== myId);
     if (!this.#ws2PeerId && peer) {
