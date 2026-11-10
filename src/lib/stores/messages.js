@@ -95,15 +95,11 @@ export const getChat = chatId => {
     },
     markMessagesDeleted: async messageIds => {
       const account = await getCurrentAccount();
-      return Promise.all(
-        messageIds.map(id =>
-          invoke("mark_message_deleted", {
-            account: Number(account.id),
-            chatId: Number(chatId),
-            messageId: String(id),
-          })
-        )
-      );
+      return invoke("mark_messages_deleted_batch", {
+        account: Number(account.id),
+        chatId: Number(chatId),
+        messageIds: messageIds.map(id => String(id)),
+      });
     },
     removeMessageFromStorage: async messageId => {
       const account = await getCurrentAccount();
@@ -116,15 +112,11 @@ export const getChat = chatId => {
     removeMessagesFromStorage: async messageIds => {
       const account = await getCurrentAccount();
       if (!account?.id) return;
-      return Promise.all(
-        messageIds.map(id =>
-          invoke("remove_message_from_storage", {
-            account: Number(account.id),
-            chatId: Number(chatId),
-            messageId: String(id),
-          }).catch(() => {})
-        )
-      );
+      return invoke("remove_messages_from_storage_batch", {
+        account: Number(account.id),
+        chatId: Number(chatId),
+        messageIds: messageIds.map(id => String(id)),
+      }).catch(() => {});
     },
     loadMessages: async (time, amount) => {
       const account = await getCurrentAccount();
