@@ -230,6 +230,73 @@ pub fn build_call_ws2_url(
     }
     url.to_string()
 }
+
+/// Normalize participant payloads from call signalling into the UI model.
+#[tauri::command]
+pub fn normalize_call_participant(raw: Value) -> Value {
+    fn truthy(value: &Value) -> bool {
+        match value {
+            Value::Null => false,
+            Value::Bool(value) => *value,
+            Value::Number(value) => value.as_f64().unwrap_or(0.0) != 0.0,
+            Value::String(value) => !value.is_empty(),
+            Value::Array(_) | Value::Object(_) => true,
+        }
+    }
+    fn first_truthy(values: Vec<Option<Value>>) -> Option<Value> {
+        values.into_iter().flatten().find(truthy)
+    }
+    fn scalar_string(value: Option<Value>) -> Option<String> {
+        value.filter(truthy).map(|value| match value {
+            Value::String(value) => value,
+            Value::Number(value) => value.to_string(),
+            Value::Bool(value) => value.to_string(),
+            _ => String::new(),
+        })
+    }
+
+    let id = raw.get("id");
+    let id_external = id.and_then(|value| value.get("external")).cloned()
+        .or_else(|| id.filter(|value| value.is_string() || value.is_number()).cloned());
+    let id_internal = id.and_then(|value| value.get("internal")).cloned()
+        .or_else(|| id.filter(|value| value.is_string() || value.is_number()).cloned());
+    let external = first_truthy(vec![
+        id_external,
+        raw.get("externalId").cloned(),
+        raw.get("userId").cloned(),
+    ]);
+    let internal = first_truthy(vec![
+        id_internal,
+        raw.get("internalId").cloned(),
+    ]);
+    let external_id = scalar_string(external.clone());
+    let internal_id = scalar_string(internal);
+    let effective_id = external_id.clone().or(internal_id.clone()).unwrap_or_default();
+    let name = first_truthy(vec![
+        raw.get("name").cloned(),
+        raw.get("displayName").cloned(),
+        raw.get("firstName").cloned(),
+    ]).unwrap_or(Value::String(String::new()));
+    let avatar = first_truthy(vec![
+        raw.get("avatarUrl").cloned(),
+        raw.get("photo").cloned(),
+        raw.get("avatar").cloned(),
+    ]).unwrap_or(Value::Null);
+
+    json!({
+        "id": effective_id,
+        "internalId": internal_id,
+        "externalId": external_id,
+        "name": name,
+        "avatar": avatar,
+        "muted": raw.get("isAudioEnabled") == Some(&Value::Bool(false))
+            || raw.get("isMicrophoneEnabled") == Some(&Value::Bool(false)),
+        "videoOn": raw.get("isVideoEnabled").map(truthy).unwrap_or(false),
+        "screenOn": raw.get("isScreenSharingEnabled").map(truthy).unwrap_or(false),
+        "speaking": false
+    })
+}
+
 macro_rules! delegate_cmd {
     ($name:ident($($arg:ident: $ty:ty),*) => $client_method:ident($($pass_arg:expr),*)) => {
         #[tauri::command]
@@ -1298,5 +1365,46 @@ mod call_sdp_url_tests {
         assert_eq!(pairs.get("userId").map(String::as_str), Some("42"));
         assert_eq!(pairs.get("version").map(String::as_str), Some("5"));
         assert!(!pairs.contains_key("tgt"));
+    }
+}
+
+
+#[cfg(test)]
+mod call_participant_tests {
+    use super::normalize_call_participant;
+    use serde_json::{json, Value};
+
+    #[test]
+    fn normalizes_nested_participant_ids_and_media_state() {
+        let participant = normalize_call_participant(json!({
+            "id": {"external": 77, "internal": "local-7"},
+            "displayName": "Alex",
+            "avatarUrl": "https://example.test/avatar",
+            "isAudioEnabled": false,
+            "isVideoEnabled": true,
+            "isScreenSharingEnabled": true
+        }));
+        assert_eq!(participant["id"], "77");
+        assert_eq!(participant["internalId"], "local-7");
+        assert_eq!(participant["externalId"], "77");
+        assert_eq!(participant["name"], "Alex");
+        assert_eq!(participant["muted"], true);
+        assert_eq!(participant["videoOn"], true);
+        assert_eq!(participant["screenOn"], true);
+        assert_eq!(participant["speaking"], false);
+    }
+
+    #[test]
+    fn normalizes_flat_ids_and_empty_optional_values() {
+        let participant = normalize_call_participant(json!({
+            "id": 42,
+            "firstName": "Sam",
+            "avatar": ""
+        }));
+        assert_eq!(participant["id"], "42");
+        assert_eq!(participant["internalId"], "42");
+        assert_eq!(participant["externalId"], "42");
+        assert_eq!(participant["name"], "Sam");
+        assert_eq!(participant["avatar"], Value::Null);
     }
 }
