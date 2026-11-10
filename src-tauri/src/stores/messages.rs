@@ -608,10 +608,25 @@ pub async fn mark_messages_deleted_batch(
     message_ids: Vec<String>,
 ) -> Result<(), String> {
     tokio::task::spawn_blocking(move || {
-        for message_id in message_ids {
-            mark_message_deleted_sync(&app, account, chat_id, &message_id)?;
+        let ids: std::collections::HashSet<String> = message_ids.into_iter().collect();
+        if ids.is_empty() {
+            return Ok(());
         }
-        Ok(())
+        let deleted_at = chrono::Utc::now().timestamp_millis();
+        modify_message_file(&app, account, chat_id, |saved| {
+            let mut changed = false;
+            for message in saved.iter_mut() {
+                let id = message.get("id").map(|value| value.to_string().replace('"', ""));
+                if id.as_ref().map_or(false, |value| ids.contains(value)) {
+                    if let Some(object) = message.as_object_mut() {
+                        object.insert("deleted".to_string(), json!(true));
+                        object.insert("deleted_at".to_string(), json!(deleted_at));
+                        changed = true;
+                    }
+                }
+            }
+            changed
+        })
     })
     .await
     .map_err(|e| e.to_string())?
@@ -625,10 +640,18 @@ pub async fn remove_messages_from_storage_batch(
     message_ids: Vec<String>,
 ) -> Result<(), String> {
     tokio::task::spawn_blocking(move || {
-        for message_id in message_ids {
-            remove_message_from_storage_sync(&app, account, chat_id, &message_id)?;
+        let ids: std::collections::HashSet<String> = message_ids.into_iter().collect();
+        if ids.is_empty() {
+            return Ok(());
         }
-        Ok(())
+        modify_message_file(&app, account, chat_id, |saved| {
+            let initial_len = saved.len();
+            saved.retain(|message| {
+                let id = message.get("id").map(|value| value.to_string().replace('"', ""));
+                !id.as_ref().map_or(false, |value| ids.contains(value))
+            });
+            saved.len() != initial_len
+        })
     })
     .await
     .map_err(|e| e.to_string())?
