@@ -184,52 +184,35 @@ export default class MobileApi extends BaseAPI {
       const opc = response.opcode;
 
       if (opc === 128) {
-        const message = response.payload.message;
-        message.chatId = response.payload.chatId;
-
+        const prepared = await invoke("prepare_incoming_message", {
+          message: response.payload.message,
+          chatId: response.payload.chatId,
+          chatInfo: getChat(response.payload.chatId).getInfo(),
+          currentUser: get(currentUser) ?? null,
+          nowMs: Date.now(),
+        });
+        const message = prepared.message;
         const chat = getChat(message.chatId);
-        if (message.status === "REMOVED") {
+
+        if (prepared.action === "deleted") {
           chat.markMessageDeleted?.(message.id);
           chat.deletedMessages?.set({ messageIds: [String(message.id)], chatId: message.chatId });
           pluginEmit("message:deleted", { messageId: message.id, chatId: message.chatId });
-        } else if (message.status === "EDITED" || message.edited) {
+        } else if (prepared.action === "edited") {
           chat.updateMessages([ message ]);
           chat.receivedMessage.set(message);
           pluginEmit("message:edited", { message, chatId: message.chatId });
-
-          chat.chatInfo.update((c) => {
-            if (c && c.lastMessage && String(c.lastMessage.id) === String(message.id)) {
-              return {
-                ...c,
-                lastMessage: message,
-              };
-            }
-            return c;
-          });
+          if (prepared.chatInfo) chat.chatInfo.set(prepared.chatInfo);
         } else {
           chat.receivedMessage.set(message);
           pluginEmit("message:received", { message, chatId: message.chatId });
+          if (prepared.chatInfo) chat.chatInfo.set(prepared.chatInfo);
 
-          const myId = Number(get(currentUser));
-          const isOutgoing = Number(message.sender) === myId || Number(message.from) === myId;
-          const msgTime = message.time || Date.now();
-
-          chat.chatInfo.update((c) => {
-            const prev = c || chat.getInfo() || { id: message.chatId, type: "DIALOG" };
-            return {
-              ...prev,
-              id: message.chatId,
-              lastMessage: message,
-              lastEventTime: msgTime,
-              newMessages: isOutgoing ? (prev.newMessages || 0) : ((prev.newMessages || 0) + 1),
-            };
+          const promoted = await invoke("promote_chat_id", {
+            ids: get(currentRealChats) || [],
+            chatId: message.chatId,
           });
-
-          currentRealChats.update((ids) => {
-            const idStr = String(message.chatId);
-            const filtered = (ids || []).filter(id => String(id) !== idStr);
-            return [message.chatId, ...filtered];
-          });
+          currentRealChats.set(promoted);
 
           const rawAttaches = message.attaches || message.attachments || [];
           const callAttach = rawAttaches.find(a => ((a._type || a.type) === 'CALL' && a.hangupType != null) || a.hangupType != null);
@@ -237,7 +220,7 @@ export default class MobileApi extends BaseAPI {
             CallService.dismissIncomingCall();
           }
 
-          if (!isOutgoing) {
+          if (!prepared.isOutgoing) {
             if (message.text) {
               const call = get(activeCall);
               if (call && (call.phase === CALL_PHASE.ACTIVE || call.phase === CALL_PHASE.CONNECTING)) {
@@ -260,6 +243,7 @@ export default class MobileApi extends BaseAPI {
               }
             }
             const info = chat.getInfo();
+            const myId = Number(get(currentUser));
             if (info?.type === "DIALOG") {
               let peerId = null;
               if (info?.participants && Object.keys(info.participants).length > 0) {
@@ -272,24 +256,10 @@ export default class MobileApi extends BaseAPI {
                 } catch {}
               }
               const contact = peerId ? await getContactDirect(peerId) : null;
-
-              newMessage(
-                message.chatId,
-                chat,
-                contact,
-                message
-              );
+              newMessage(message.chatId, chat, contact, message);
             } else {
-              let contact = null;
-              if (message.sender) {
-                contact = await getContactDirect(message.sender);
-              }
-              newMessage(
-                message.chatId,
-                chat,
-                contact,
-                message
-              );
+              const contact = message.sender ? await getContactDirect(message.sender) : null;
+              newMessage(message.chatId, chat, contact, message);
             }
           }
         }
