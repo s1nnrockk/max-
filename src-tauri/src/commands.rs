@@ -570,8 +570,8 @@ pub fn prepare_incoming_message(
         chat_info.map(|mut current| {
             let matches_last = current.get("lastMessage")
                 .and_then(|last| last.get("id"))
-                .map(|id| id.to_string())
-                == message.get("id").map(Value::to_string);
+                .map(js_string)
+                == message.get("id").map(js_string);
             if matches_last {
                 if let Some(object) = current.as_object_mut() {
                     object.insert("lastMessage".to_string(), message.clone());
