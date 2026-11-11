@@ -521,6 +521,168 @@ pub fn sort_folders(folders: Vec<Value>, order: Vec<Value>) -> Vec<Value> {
     indexed.into_iter().map(|(_, folder)| folder).collect()
 }
 
+
+fn js_number(value: Option<&Value>) -> Option<f64> {
+    match value {
+        None => None,
+        Some(Value::Null) => Some(0.0),
+        Some(Value::Bool(value)) => Some(if *value { 1.0 } else { 0.0 }),
+        Some(Value::Number(value)) => value.as_f64(),
+        Some(Value::String(value)) => {
+            let trimmed = value.trim();
+            if trimmed.is_empty() { Some(0.0) } else { trimmed.parse::<f64>().ok() }
+        }
+        _ => None,
+    }
+}
+
+/// Prepare an incoming message event and its chat-list state in the native core.
+#[tauri::command]
+pub fn prepare_incoming_message(
+    mut message: Value,
+    chat_id: Value,
+    chat_info: Option<Value>,
+    current_user: Value,
+    now_ms: i64,
+) -> Value {
+    if let Some(object) = message.as_object_mut() {
+        object.insert("chatId".to_string(), chat_id.clone());
+    }
+
+    let status = message.get("status").and_then(Value::as_str).unwrap_or("");
+    let edited = message.get("edited").and_then(Value::as_bool).unwrap_or(false);
+    let action = if status == "REMOVED" {
+        "deleted"
+    } else if status == "EDITED" || edited {
+        "edited"
+    } else {
+        "received"
+    };
+
+    let my_id = js_number(Some(&current_user));
+    let sender_id = js_number(message.get("sender"));
+    let from_id = js_number(message.get("from"));
+    let is_outgoing = my_id.is_some() && (sender_id == my_id || from_id == my_id);
+
+    let next_chat_info = if action == "deleted" {
+        chat_info.clone()
+    } else if action == "edited" {
+        chat_info.map(|mut current| {
+            let matches_last = current.get("lastMessage")
+                .and_then(|last| last.get("id"))
+                .map(|id| id.to_string())
+                == message.get("id").map(Value::to_string);
+            if matches_last {
+                if let Some(object) = current.as_object_mut() {
+                    object.insert("lastMessage".to_string(), message.clone());
+                }
+            }
+            current
+        })
+    } else {
+        let mut previous = chat_info
+            .filter(|value| !value.is_null())
+            .unwrap_or_else(|| json!({ "id": chat_id, "type": "DIALOG" }));
+        if !previous.is_object() {
+            previous = json!({ "id": chat_id, "type": "DIALOG" });
+        }
+        let message_time = message.get("time")
+            .filter(|value| match value {
+                Value::Null => false,
+                Value::Bool(flag) => *flag,
+                Value::Number(number) => number.as_f64().unwrap_or(0.0) != 0.0,
+                Value::String(text) => !text.is_empty(),
+                _ => true,
+            })
+            .cloned()
+            .unwrap_or(json!(now_ms));
+        let unread = previous.get("newMessages")
+            .and_then(js_number)
+            .unwrap_or(0.0);
+        if let Some(object) = previous.as_object_mut() {
+            object.insert("id".to_string(), chat_id.clone());
+            object.insert("lastMessage".to_string(), message.clone());
+            object.insert("lastEventTime".to_string(), message_time);
+            object.insert("newMessages".to_string(), json!(if is_outgoing { unread } else { unread + 1.0 }));
+        }
+        previous
+    };
+
+    json!({
+        "action": action,
+        "message": message,
+        "isOutgoing": is_outgoing,
+        "chatInfo": next_chat_info
+    })
+}
+
+/// Move a chat to the front of the recent-chat order without duplicating it.
+#[tauri::command]
+pub fn promote_chat_id(mut ids: Vec<Value>, chat_id: Value) -> Vec<Value> {
+    let key = chat_id.to_string();
+    ids.retain(|id| id.to_string() != key);
+    ids.insert(0, chat_id);
+    ids
+}
+
+#[cfg(test)]
+mod incoming_message_tests {
+    use super::{prepare_incoming_message, promote_chat_id};
+    use serde_json::json;
+
+    #[test]
+    fn prepares_incoming_and_outgoing_chat_updates() {
+        let incoming = prepare_incoming_message(
+            json!({"id": 9, "sender": 22, "time": 123}),
+            json!(77),
+            Some(json!({"id": 77, "type": "DIALOG", "newMessages": 2})),
+            json!(11),
+            999,
+        );
+        assert_eq!(incoming["action"], "received");
+        assert_eq!(incoming["isOutgoing"], false);
+        assert_eq!(incoming["message"]["chatId"], 77);
+        assert_eq!(incoming["chatInfo"]["newMessages"], 3);
+
+        let outgoing = prepare_incoming_message(
+            json!({"id": 10, "from": "11"}),
+            json!(77),
+            Some(json!({"id": 77, "newMessages": 2})),
+            json!(11),
+            999,
+        );
+        assert_eq!(outgoing["isOutgoing"], true);
+        assert_eq!(outgoing["chatInfo"]["newMessages"], 2);
+        assert_eq!(outgoing["chatInfo"]["lastEventTime"], 999);
+    }
+
+    #[test]
+    fn preserves_edited_and_deleted_message_semantics() {
+        let current = json!({"id": 77, "lastMessage": {"id": 9, "text": "old"}});
+        let edited = prepare_incoming_message(
+            json!({"id": 9, "text": "new", "status": "EDITED"}),
+            json!(77), Some(current.clone()), json!(11), 999,
+        );
+        assert_eq!(edited["action"], "edited");
+        assert_eq!(edited["chatInfo"]["lastMessage"]["text"], "new");
+
+        let deleted = prepare_incoming_message(
+            json!({"id": 9, "status": "REMOVED"}),
+            json!(77), Some(current.clone()), json!(11), 999,
+        );
+        assert_eq!(deleted["action"], "deleted");
+        assert_eq!(deleted["chatInfo"], current);
+    }
+
+    #[test]
+    fn promotes_chat_without_duplicates_and_keeps_order() {
+        assert_eq!(
+            promote_chat_id(vec![json!(1), json!("2"), json!(3)], json!(2)),
+            vec![json!(2), json!(1), json!(3)]
+        );
+    }
+}
+
 /// Merge read-receipt results into the cached chat model on the native side.
 #[tauri::command]
 pub fn merge_read_message_state(
