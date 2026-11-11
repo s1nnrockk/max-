@@ -582,7 +582,7 @@ pub fn prepare_incoming_message(
     } else {
         let mut previous = chat_info
             .filter(|value| !value.is_null())
-            .unwrap_or_else(|| json!({ "id": chat_id, "type": "DIALOG" }));
+            .unwrap_or_else(|| json!({ "id": chat_id.clone(), "type": "DIALOG" }));
         if !previous.is_object() {
             previous = json!({ "id": chat_id, "type": "DIALOG" });
         }
@@ -597,7 +597,8 @@ pub fn prepare_incoming_message(
             .cloned()
             .unwrap_or(json!(now_ms));
         let unread = previous.get("newMessages")
-            .and_then(js_number)
+            .map(|value| js_number(Some(value)))
+            .flatten()
             .unwrap_or(0.0);
         if let Some(object) = previous.as_object_mut() {
             object.insert("id".to_string(), chat_id.clone());
@@ -618,9 +619,20 @@ pub fn prepare_incoming_message(
 
 /// Move a chat to the front of the recent-chat order without duplicating it.
 #[tauri::command]
+fn js_string(value: &Value) -> String {
+    match value {
+        Value::String(value) => value.clone(),
+        Value::Null => "null".to_string(),
+        Value::Bool(value) => value.to_string(),
+        Value::Number(value) => value.to_string(),
+        Value::Array(values) => values.iter().map(js_string).collect::<Vec<_>>().join(","),
+        Value::Object(_) => "[object Object]".to_string(),
+    }
+}
+
 pub fn promote_chat_id(mut ids: Vec<Value>, chat_id: Value) -> Vec<Value> {
-    let key = chat_id.to_string();
-    ids.retain(|id| id.to_string() != key);
+    let key = js_string(&chat_id);
+    ids.retain(|id| js_string(id) != key);
     ids.insert(0, chat_id);
     ids
 }
