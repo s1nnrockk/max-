@@ -169,6 +169,17 @@ class VoiceChannel {
   #seq = 1;
   #listeners = new Map();
   #onClose = null;
+  #encodeQueue = Promise.resolve();
+
+  #buildMessage(sequence, command, extra) {
+    const task = this.#encodeQueue.then(() => invoke('build_call_ws2_envelope', {
+      sequence,
+      command,
+      extra,
+    }));
+    this.#encodeQueue = task.catch(() => {});
+    return task;
+  }
 
   get isOpen() {
     return Boolean(this.#socket && this.#socket.readyState === WebSocket.OPEN);
@@ -275,11 +286,7 @@ class VoiceChannel {
 
   async send(cmd, extra = {}) {
     const seq = this.#seq++;
-    const msg = await invoke('build_call_ws2_envelope', {
-      sequence: seq,
-      command: cmd,
-      extra,
-    });
+    const msg = await this.#buildMessage(seq, cmd, extra);
     log(`[call:ws2:send] ${cmd}`, msg);
     this.#socket.send(JSON.stringify(msg));
     return new Promise((resolve, reject) => {
@@ -297,11 +304,7 @@ class VoiceChannel {
     try {
       if (this.#socket && this.#socket.readyState === WebSocket.OPEN) {
         const seq = this.#seq++;
-        const message = await invoke('build_call_ws2_envelope', {
-          sequence: seq,
-          command: cmd,
-          extra,
-        });
+        const message = await this.#buildMessage(seq, cmd, extra);
         this.#socket.send(JSON.stringify(message));
       }
     } catch {}
