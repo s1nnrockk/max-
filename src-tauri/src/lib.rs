@@ -161,6 +161,8 @@ pub fn run() {
             commands::normalize_contacts,
             commands::sort_folders,
             commands::merge_read_message_state,
+            commands::prepare_incoming_message,
+            commands::promote_chat_id,
             commands::reconnect_delay_ms,
             commands::resolve_theme_mode,
             commands::extract_video_slot_mids,
