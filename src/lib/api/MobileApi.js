@@ -271,19 +271,19 @@ export default class MobileApi extends BaseAPI {
           const userId = Number(payload.userId);
           const mark = Number(payload.mark);
           const myId = Number(get(currentUser));
-
           const chat = getChat(chatId);
           chat.readReceipt?.set({ userId, mark });
 
-          chat.chatInfo.update((current) => {
-            if (!current) return current;
-            const participants = { ...(current.participants || {}), [userId]: mark };
-            let otherReadTime = current.otherReadTime || 0;
-            if (userId !== myId && mark > otherReadTime) {
-              otherReadTime = mark;
-            }
-            return { ...current, participants, otherReadTime };
-          });
+          const current = chat.getInfo();
+          if (current) {
+            const merged = await invoke("merge_chat_read_receipt", {
+              chat: current,
+              userId,
+              mark,
+              currentUserId: myId,
+            });
+            chat.chatInfo.set(merged);
+          }
         }
       } else if (opc === 132) {
         const p = response.payload;
