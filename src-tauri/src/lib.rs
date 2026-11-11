@@ -162,6 +162,7 @@ pub fn run() {
             commands::sort_folders,
             commands::merge_read_message_state,
             commands::prepare_incoming_message,
+            commands::merge_chat_read_receipt,
             commands::promote_chat_id,
             commands::reconnect_delay_ms,
             commands::resolve_theme_mode,
