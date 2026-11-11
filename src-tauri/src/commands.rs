@@ -695,6 +695,37 @@ mod incoming_message_tests {
     }
 }
 
+
+/// Merge a chat read receipt and its per-participant read marker in Rust.
+#[tauri::command]
+pub fn merge_chat_read_receipt(mut chat: Value, user_id: u64, mark: i64, current_user_id: u64) -> Value {
+    let Some(object) = chat.as_object_mut() else { return chat; };
+    let mut participants = object.get("participants").and_then(Value::as_object).cloned().unwrap_or_default();
+    participants.insert(user_id.to_string(), json!(mark));
+    object.insert("participants".to_string(), Value::Object(participants));
+    let other_read_time = object.get("otherReadTime").and_then(Value::as_i64).unwrap_or(0);
+    if user_id != current_user_id && mark > other_read_time {
+        object.insert("otherReadTime".to_string(), json!(mark));
+    }
+    chat
+}
+
+#[cfg(test)]
+mod chat_read_receipt_tests {
+    use super::merge_chat_read_receipt;
+    use serde_json::json;
+    #[test]
+    fn merges_participant_marker_and_only_advances_other_read_time() {
+        let chat = merge_chat_read_receipt(json!({"participants":{"4":10},"otherReadTime":12}), 5, 20, 1);
+        assert_eq!(chat["participants"]["4"], 10);
+        assert_eq!(chat["participants"]["5"], 20);
+        assert_eq!(chat["otherReadTime"], 20);
+        let own = merge_chat_read_receipt(json!({"participants":{},"otherReadTime":20}), 1, 30, 1);
+        assert_eq!(own["participants"]["1"], 30);
+        assert_eq!(own["otherReadTime"], 20);
+    }
+}
+
 /// Merge read-receipt results into the cached chat model on the native side.
 #[tauri::command]
 pub fn merge_read_message_state(
