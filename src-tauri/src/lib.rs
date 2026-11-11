@@ -163,6 +163,7 @@ pub fn run() {
             commands::merge_read_message_state,
             commands::prepare_incoming_message,
             commands::merge_chat_read_receipt,
+            commands::normalize_message_deletion,
             commands::promote_chat_id,
             commands::reconnect_delay_ms,
             commands::resolve_theme_mode,
