@@ -7,8 +7,28 @@ use super::storage::{crypto_key, Paths, Storage};
 const MAX_CHUNK_MESSAGES: usize = 100;
 
 pub fn compute_tokens_diff(old_text: &str, new_text: &str) -> Vec<Value> {
-    let old_tokens: Vec<&str> = old_text.split_inclusive(|c: char| c.is_whitespace()).collect();
-    let new_tokens: Vec<&str> = new_text.split_inclusive(|c: char| c.is_whitespace()).collect();
+    fn tokenize(text: &str) -> Vec<&str> {
+        let mut tokens = Vec::new();
+        let mut start = 0;
+        let mut previous_class: Option<bool> = None;
+        for (index, character) in text.char_indices() {
+            let class = character.is_whitespace();
+            if previous_class.map_or(false, |previous| previous != class) {
+                tokens.push(&text[start..index]);
+                start = index;
+            }
+            previous_class = Some(class);
+        }
+        if start < text.len() {
+            tokens.push(&text[start..]);
+        }
+        tokens
+    }
+
+    // Match the Web client's /\\s+|[^\\s]+/ tokenizer exactly:
+    // whitespace runs and non-whitespace runs are separate tokens.
+    let old_tokens = tokenize(old_text);
+    let new_tokens = tokenize(new_text);
     let m = old_tokens.len();
     let n = new_tokens.len();
 
@@ -682,4 +702,40 @@ pub fn clear_local_messages(
         let _ = fs::remove_dir_all(&dir);
     }
     Ok(())
+}
+
+
+
+#[cfg(test)]
+mod token_diff_tests {
+    use super::compute_tokens_diff;
+    use serde_json::json;
+
+    #[test]
+    fn tokenizes_whitespace_runs_separately_like_the_web_client() {
+        assert_eq!(
+            compute_tokens_diff("hello world", "hello brave world"),
+            vec![
+                json!({"op": "=", "text": "hello "}),
+                json!({"op": "+", "text": "brave"}),
+                json!({"op": "=", "text": " world"}),
+            ]
+        );
+    }
+
+    #[test]
+    fn handles_empty_and_unicode_text() {
+        assert_eq!(
+            compute_tokens_diff("", "привет мир"),
+            vec![json!({"op": "+", "text": "привет мир"})]
+        );
+        assert_eq!(
+            compute_tokens_diff("你好 世界", "你好 Rust 世界"),
+            vec![
+                json!({"op": "=", "text": "你好 "}),
+                json!({"op": "+", "text": "Rust"}),
+                json!({"op": "=", "text": " 世界"}),
+            ]
+        );
+    }
 }
