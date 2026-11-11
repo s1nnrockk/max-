@@ -298,6 +298,114 @@ pub fn normalize_call_participant(raw: Value) -> Value {
     })
 }
 
+
+/// Build the WS2 signalling envelope in the native core.
+#[tauri::command]
+pub fn build_call_ws2_envelope(sequence: u64, command: String, extra: Option<Value>) -> Value {
+    let mut message = serde_json::Map::new();
+    message.insert("command".to_string(), json!(command));
+    message.insert("sequence".to_string(), json!(sequence));
+    if let Some(Value::Object(fields)) = extra {
+        for (key, value) in fields {
+            message.insert(key, value);
+        }
+    }
+    Value::Object(message)
+}
+
+/// Decode and classify one WS2 signalling message in Rust.
+#[tauri::command]
+pub fn decode_call_ws2_message(raw: String, pending_sequences: Vec<u64>) -> Result<Value, String> {
+    let message: Value = serde_json::from_str(&raw).map_err(|error| error.to_string())?;
+    let sequence = message.get("sequence").and_then(Value::as_u64);
+    let is_pending_response = sequence
+        .map(|value| pending_sequences.contains(&value))
+        .unwrap_or(false);
+    let is_error = message.get("type").and_then(Value::as_str) == Some("error")
+        || message.get("error").map(|value| match value {
+            Value::Null => false,
+            Value::Bool(flag) => *flag,
+            Value::Number(number) => number.as_f64().unwrap_or(0.0) != 0.0,
+            Value::String(text) => !text.is_empty(),
+            _ => true,
+        }).unwrap_or(false);
+    let notification = message.get("notification")
+        .filter(|value| match value {
+            Value::Null => false,
+            Value::Bool(flag) => *flag,
+            Value::Number(number) => number.as_f64().unwrap_or(0.0) != 0.0,
+            Value::String(text) => !text.is_empty(),
+            _ => true,
+        })
+        .or_else(|| message.get("type"));
+    let error_value = message.get("message")
+        .filter(|value| match value {
+            Value::Null => false,
+            Value::Bool(flag) => *flag,
+            Value::Number(number) => number.as_f64().unwrap_or(0.0) != 0.0,
+            Value::String(text) => !text.is_empty(),
+            _ => true,
+        })
+        .or_else(|| message.get("error"));
+    let error_message = error_value.map(|value| match value {
+        Value::String(text) => text.clone(),
+        Value::Null => "null".to_string(),
+        Value::Bool(flag) => flag.to_string(),
+        Value::Number(number) => number.to_string(),
+        _ => value.to_string(),
+    }).unwrap_or_else(|| "Server error".to_string());
+    let is_conversation_ended = is_error
+        && (error_message == "conversation-ended"
+            || message.get("error").and_then(Value::as_str) == Some("conversation-ended"));
+
+    Ok(json!({
+        "message": message,
+        "sequence": sequence,
+        "pendingResponse": is_pending_response,
+        "isError": is_error,
+        "errorMessage": error_message,
+        "conversationEnded": is_conversation_ended,
+        "notification": notification
+    }))
+}
+
+#[cfg(test)]
+mod call_ws2_protocol_tests {
+    use super::{build_call_ws2_envelope, decode_call_ws2_message};
+    use serde_json::json;
+
+    #[test]
+    fn builds_envelope_and_preserves_extra_override_semantics() {
+        let message = build_call_ws2_envelope(7, "answer".into(), Some(json!({
+            "sequence": 9,
+            "custom": true
+        })));
+        assert_eq!(message["command"], "answer");
+        assert_eq!(message["sequence"], 9);
+        assert_eq!(message["custom"], true);
+    }
+
+    #[test]
+    fn classifies_pending_responses_and_notifications() {
+        let decoded = decode_call_ws2_message(
+            r#"{"sequence":4,"type":"accepted"}"#.into(),
+            vec![4, 5],
+        ).unwrap();
+        assert_eq!(decoded["pendingResponse"], true);
+        assert_eq!(decoded["notification"], "accepted");
+    }
+
+    #[test]
+    fn recognizes_conversation_ended_errors() {
+        let decoded = decode_call_ws2_message(
+            r#"{"type":"error","error":"conversation-ended"}"#.into(),
+            vec![],
+        ).unwrap();
+        assert_eq!(decoded["isError"], true);
+        assert_eq!(decoded["conversationEnded"], true);
+    }
+}
+
 macro_rules! delegate_cmd {
     ($name:ident($($arg:ident: $ty:ty),*) => $client_method:ident($($pass_arg:expr),*)) => {
         #[tauri::command]
