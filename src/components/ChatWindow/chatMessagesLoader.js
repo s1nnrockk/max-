@@ -1,8 +1,8 @@
 import { get } from "svelte/store";
+import { invoke } from "@tauri-apps/api/core";
 import { batchDecrypt } from "$lib/crypto/messages";
 import { getCurrentAccount } from "$lib/stores/accounts";
 import { checkForEncryptionRequest } from "$components/ChatWindow/e2e";
-import { computeTextDiff } from "$lib/utils/diff";
 import { get as sessionGet } from "$lib/stores/session";
 
 export const BATCH_SIZE = 40;
@@ -79,79 +79,22 @@ export function createMessagesLoader({
   async function mergeMessages(incoming, updateCache = false) {
     if (!incoming?.length) return;
 
-    const map = new Map(
-      get(messages).map((m) => [String(m.id), m])
-    );
-
     const activeChatId = getChatObj()?.id ?? getChatId();
-    const changed = [];
+    const result = await invoke("merge_message_batch", {
+      existing: get(messages),
+      incoming,
+      activeChatId: activeChatId ?? null,
+      nowMs: Date.now(),
+    });
 
-    for (const msg of incoming) {
-      const msgId = String(msg.id);
-      const old = map.get(msgId);
+    if (!result?.changed?.length) return;
 
-      if (!old) {
-        const isEdited = msg.status === "EDITED" || !!msg.edited;
-        const entry = {
-          ...msg,
-          id: msgId,
-          chatId: msg.chatId ?? activeChatId,
-          ...(isEdited ? { edited: true } : {}),
-        };
-        map.set(msgId, entry);
-        changed.push(entry);
-        continue;
-      }
-
-      const isEditedStatus = msg.status === "EDITED" || old.status === "EDITED" || old.edited || msg.edited;
-      const isDeletedStatus = old.deleted || msg.deleted || msg.status === "REMOVED";
-
-      let newHistory = Array.isArray(old.history) ? [...old.history] : [];
-      if (Array.isArray(msg.history)) {
-        for (const h of msg.history) {
-          if (!newHistory.some((existing) => existing.at === h.at)) {
-            newHistory.push(h);
-          }
-        }
-      }
-
-      const textChanged = old.text && msg.text && old.text !== msg.text;
-      if (textChanged && (!Array.isArray(msg.history) || !msg.history.length)) {
-        const textDiff = computeTextDiff(old.text, msg.text);
-        const at = msg.editTime || msg.edited_at || Date.now();
-        newHistory.push({ at, diff: textDiff });
-      }
-
-      const merged = {
-        ...old,
-        ...msg,
-        elements: (msg?.elements && msg.elements.length > 0)
-          ? msg.elements
-          : (old.elements || []),
-        id: msgId,
-        chatId: msg.chatId ?? old.chatId ?? activeChatId,
-        ...(isDeletedStatus ? { deleted: true, deleted_at: old.deleted_at || msg.deleted_at || Date.now() } : {}),
-        ...(isEditedStatus ? { edited: true, edited_at: old.edited_at || msg.edited_at || msg.editTime || Date.now() } : {}),
-        ...(newHistory.length ? { history: newHistory } : {}),
-      };
-
-      if (JSON.stringify(old) !== JSON.stringify(merged)) {
-        map.set(msgId, merged);
-        changed.push(merged);
-      }
-    }
-
-    if (!changed.length) return;
-
-    messages.set(
-      [...map.values()].sort((a, b) => a.time - b.time)
-    );
-
+    messages.set(result.messages || []);
     if (updateCache) {
-      getChatCache()?.updateMessages(changed);
+      getChatCache()?.updateMessages(result.changed);
     }
 
-    await decodeMessagesBatch(changed);
+    await decodeMessagesBatch(result.changed);
   }
 
   async function loadHistory(
