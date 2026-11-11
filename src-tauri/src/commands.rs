@@ -596,15 +596,12 @@ pub fn prepare_incoming_message(
             })
             .cloned()
             .unwrap_or(json!(now_ms));
-        let unread = previous.get("newMessages")
-            .map(|value| js_number(Some(value)))
-            .flatten()
-            .unwrap_or(0.0);
+        let unread = previous.get("newMessages").and_then(Value::as_i64).unwrap_or(0);
         if let Some(object) = previous.as_object_mut() {
             object.insert("id".to_string(), chat_id.clone());
             object.insert("lastMessage".to_string(), message.clone());
             object.insert("lastEventTime".to_string(), message_time);
-            object.insert("newMessages".to_string(), json!(if is_outgoing { unread } else { unread + 1.0 }));
+            object.insert("newMessages".to_string(), json!(if is_outgoing { unread } else { unread.saturating_add(1) }));
         }
         previous
     };
@@ -718,7 +715,7 @@ pub fn normalize_message_deletion(payload: Value) -> Value {
             _ => None,
         }).collect())
         .unwrap_or_default();
-    if message_ids.is_empty() {
+    if payload.get("messageIds").and_then(Value::as_array).is_none() {
         if let Some(id) = payload.get("messageId") {
             match id {
                 Value::String(value) if !value.is_empty() => message_ids.push(value.clone()),
