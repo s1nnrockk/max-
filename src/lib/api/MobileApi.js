@@ -326,16 +326,18 @@ export default class MobileApi extends BaseAPI {
       } else if (opc === 293) {
         handleTranscriptionPush(response.payload);
       } else if (opc === 142 || opc === 140) {
-        const p = response.payload;
-        const cId = p?.chatId || p?.chat?.id;
-        const messageIds = p?.messageIds || (p?.messageId ? [p.messageId] : []);
+        const normalized = await invoke("normalize_message_deletion", {
+          payload: response.payload,
+        });
+        const cId = normalized.chatId;
+        const messageIds = normalized.messageIds || [];
         if (cId && messageIds.length) {
           const chat = getChat(cId);
           for (const mId of messageIds) {
             chat.markMessageDeleted?.(mId);
           }
-          chat.deletedMessages?.set({ messageIds: messageIds.map(String), chatId: cId });
-          pluginEmit("messages:deleted", { messageIds: messageIds.map(String), chatId: cId });
+          chat.deletedMessages?.set({ messageIds, chatId: cId });
+          pluginEmit("messages:deleted", { messageIds, chatId: cId });
         }
       } else if (opc === 131) {
         const contact = response.payload?.contact;
