@@ -179,20 +179,15 @@ class VoiceChannel {
     log('[call:ws2:connect]', url);
     this.#socket = new WebSocket(url);
 
-    this.#socket.onmessage = (e) => {
+    this.#socket.onmessage = async (e) => {
       const dataStr = typeof e.data === 'string' ? e.data.trim() : '';
       if (dataStr === 'ping') {
-        try {
-          this.#socket?.send('pong');
-        } catch {}
+        try { this.#socket?.send('pong'); } catch {}
         return;
       }
-      if (dataStr === 'pong') {
-        return;
-      }
+      if (dataStr === 'pong') return;
       try {
-        const parsed = JSON.parse(e.data);
-        this.#dispatch(parsed);
+        await this.#dispatch(dataStr);
       } catch (err) {
         log('[call:ws2:parse-error]', err, e.data);
       }
@@ -221,9 +216,7 @@ class VoiceChannel {
           clearTimeout(timer);
           reject(new Error(ev.reason || `ws2 closed with code ${ev.code}`));
         }
-        if (ev.code !== 1000 && ev.reason) {
-          patchCallState({ errorText: ev.reason });
-        }
+        if (ev.code !== 1000 && ev.reason) patchCallState({ errorText: ev.reason });
         onClose?.();
       };
 
@@ -239,25 +232,31 @@ class VoiceChannel {
     });
   }
 
-  #dispatch(msg) {
-    const seq = msg.sequence;
-    if (seq != null && this.#pendingRequests.has(seq)) {
+  async #dispatch(raw) {
+    const decoded = await invoke('decode_call_ws2_message', {
+      raw,
+      pendingSequences: [...this.#pendingRequests.keys()].filter(Number.isSafeInteger),
+    });
+    const msg = decoded.message;
+    const seq = decoded.sequence;
+
+    if (decoded.pendingResponse && this.#pendingRequests.has(seq)) {
       const { resolve, reject } = this.#pendingRequests.get(seq);
       this.#pendingRequests.delete(seq);
-      if (msg.type === 'error' || msg.error) {
-        reject(new Error(msg.message || msg.error || 'Server error'));
-        return;
+      if (decoded.isError) {
+        reject(new Error(decoded.errorMessage || 'Server error'));
+      } else {
+        resolve(msg);
       }
-      resolve(msg);
       return;
     }
 
-    const name = msg.notification || msg.type;
+    const name = decoded.notification;
     log(`[call:ws2:recv] ${name ?? 'NO-TYPE'}`, msg);
 
-    if (msg.type === 'error' || msg.error) {
-      const errorMsg = msg.message || msg.error || 'Server error';
-      if (errorMsg === 'conversation-ended' || msg.error === 'conversation-ended') {
+    if (decoded.isError) {
+      const errorMsg = decoded.errorMessage || 'Server error';
+      if (decoded.conversationEnded) {
         log('[call:ws2:conversation-ended]');
         for (const fn of (this.#listeners.get('conversation-ended') || [])) fn(msg);
         this.destroy();
@@ -274,9 +273,13 @@ class VoiceChannel {
     }
   }
 
-  send(cmd, extra = {}) {
+  async send(cmd, extra = {}) {
     const seq = this.#seq++;
-    const msg = { command: cmd, sequence: seq, ...extra };
+    const msg = await invoke('build_call_ws2_envelope', {
+      sequence: seq,
+      command: cmd,
+      extra,
+    });
     log(`[call:ws2:send] ${cmd}`, msg);
     this.#socket.send(JSON.stringify(msg));
     return new Promise((resolve, reject) => {
@@ -290,11 +293,16 @@ class VoiceChannel {
     });
   }
 
-  sendQuiet(cmd, extra = {}) {
+  async sendQuiet(cmd, extra = {}) {
     try {
       if (this.#socket && this.#socket.readyState === WebSocket.OPEN) {
         const seq = this.#seq++;
-        this.#socket.send(JSON.stringify({ command: cmd, sequence: seq, ...extra }));
+        const message = await invoke('build_call_ws2_envelope', {
+          sequence: seq,
+          command: cmd,
+          extra,
+        });
+        this.#socket.send(JSON.stringify(message));
       }
     } catch {}
   }
@@ -316,7 +324,6 @@ class VoiceChannel {
     this.#socket = null;
   }
 }
-
 async function parseParticipant(raw) {
   return invoke('normalize_call_participant', { raw });
 }
