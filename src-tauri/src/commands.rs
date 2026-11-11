@@ -1768,3 +1768,180 @@ mod call_participant_tests {
         assert_eq!(participant["avatar"], Value::Null);
     }
 }
+
+
+/// Merge a fetched message page into the active chat in the native core.
+/// The WebView remains responsible only for rendering, decrypting and scroll anchoring.
+#[tauri::command]
+pub fn merge_message_batch(
+    existing: Vec<Value>,
+    incoming: Vec<Value>,
+    active_chat_id: Option<Value>,
+    now_ms: i64,
+) -> Value {
+    use std::collections::HashMap;
+
+    if incoming.is_empty() {
+        return json!({"messages": existing, "changed": []});
+    }
+
+    let mut positions: HashMap<String, usize> = HashMap::new();
+    let mut merged = Vec::with_capacity(existing.len() + incoming.len());
+    for message in existing {
+        let id = message.get("id").map(js_string).unwrap_or_else(|| "undefined".to_string());
+        if !positions.contains_key(&id) {
+            positions.insert(id, merged.len());
+        }
+        merged.push(message);
+    }
+
+    let mut changed = Vec::new();
+    for message in incoming {
+        let id = message.get("id").map(js_string).unwrap_or_else(|| "undefined".to_string());
+        if let Some(index) = positions.get(&id).copied() {
+            let old = &merged[index];
+            let is_edited_status = message.get("status").and_then(Value::as_str) == Some("EDITED")
+                || old.get("status").and_then(Value::as_str) == Some("EDITED")
+                || old.get("edited").and_then(Value::as_bool).unwrap_or(false)
+                || message.get("edited").and_then(Value::as_bool).unwrap_or(false);
+            let is_deleted_status = old.get("deleted").and_then(Value::as_bool).unwrap_or(false)
+                || message.get("deleted").and_then(Value::as_bool).unwrap_or(false)
+                || message.get("status").and_then(Value::as_str) == Some("REMOVED");
+
+            let mut history = old.get("history").and_then(Value::as_array).cloned().unwrap_or_default();
+            if let Some(incoming_history) = message.get("history").and_then(Value::as_array) {
+                for entry in incoming_history {
+                    let entry_at = entry.get("at");
+                    if !history.iter().any(|current| current.get("at") == entry_at) {
+                        history.push(entry.clone());
+                    }
+                }
+            }
+
+            let old_text = old.get("text").and_then(Value::as_str).unwrap_or("");
+            let new_text = message.get("text").and_then(Value::as_str).unwrap_or("");
+            if !old_text.is_empty() && !new_text.is_empty() && old_text != new_text
+                && message.get("history").and_then(Value::as_array).map_or(true, |items| items.is_empty())
+            {
+                let at = message.get("editTime")
+                    .filter(|v| !v.is_null() && v != &json!(false) && v != &json!(0) && v != &json!(""))
+                    .or_else(|| message.get("edited_at")
+                        .filter(|v| !v.is_null() && v != &json!(false) && v != &json!(0) && v != &json!("")))
+                    .cloned()
+                    .unwrap_or(json!(now_ms));
+                let diff = crate::stores::messages::compute_tokens_diff(old_text, new_text);
+                history.push(json!({"at": at, "diff": diff}));
+            }
+
+            let mut next = old.clone();
+            if let (Some(target), Some(source)) = (next.as_object_mut(), message.as_object()) {
+                for (key, value) in source {
+                    target.insert(key.clone(), value.clone());
+                }
+            }
+            let incoming_elements = message.get("elements").and_then(Value::as_array);
+            if incoming_elements.map_or(true, |items| items.is_empty()) {
+                if let Some(old_elements) = old.get("elements") {
+                    next["elements"] = old_elements.clone();
+                }
+            }
+            next["id"] = json!(id);
+            if let Some(chat_id) = message.get("chatId").filter(|v| !v.is_null())
+                .or_else(|| old.get("chatId").filter(|v| !v.is_null()))
+                .cloned().or(active_chat_id.clone()) {
+                next["chatId"] = chat_id;
+            }
+            if is_deleted_status {
+                next["deleted"] = json!(true);
+                let deleted_at = old.get("deleted_at").filter(|v| !v.is_null())
+                    .or_else(|| message.get("deleted_at").filter(|v| !v.is_null()))
+                    .cloned().unwrap_or(json!(now_ms));
+                next["deleted_at"] = deleted_at;
+            }
+            if is_edited_status {
+                next["edited"] = json!(true);
+                let edited_at = old.get("edited_at").filter(|v| !v.is_null())
+                    .or_else(|| message.get("edited_at").filter(|v| !v.is_null()))
+                    .or_else(|| message.get("editTime").filter(|v| !v.is_null()))
+                    .cloned().unwrap_or(json!(now_ms));
+                next["edited_at"] = edited_at;
+            }
+            if !history.is_empty() {
+                next["history"] = Value::Array(history);
+            }
+            if next != *old {
+                merged[index] = next.clone();
+                changed.push(next);
+            }
+        } else {
+            let is_edited = message.get("status").and_then(Value::as_str) == Some("EDITED")
+                || message.get("edited").and_then(Value::as_bool).unwrap_or(false);
+            let mut next = message;
+            if let Some(object) = next.as_object_mut() {
+                object.insert("id".to_string(), json!(id.clone()));
+                if object.get("chatId").map_or(true, Value::is_null) {
+                    if let Some(chat_id) = active_chat_id.clone() {
+                        object.insert("chatId".to_string(), chat_id);
+                    }
+                }
+                if is_edited {
+                    object.insert("edited".to_string(), json!(true));
+                }
+            }
+            positions.insert(id, merged.len());
+            merged.push(next.clone());
+            changed.push(next);
+        }
+    }
+
+    merged.sort_by_key(|message| message.get("time").and_then(Value::as_i64).unwrap_or(0));
+    json!({"messages": merged, "changed": changed})
+}
+
+#[cfg(test)]
+mod message_batch_merge_tests {
+    use super::merge_message_batch;
+    use serde_json::json;
+
+    #[test]
+    fn merges_pages_deduplicates_and_sorts_messages() {
+        let result = merge_message_batch(
+            vec![json!({"id": 2, "time": 20, "text": "two"}), json!({"id": 1, "time": 10})],
+            vec![json!({"id": "2", "time": 20, "text": "updated"}), json!({"id": 3, "time": 30})],
+            Some(json!(77)),
+            100,
+        );
+        assert_eq!(result["messages"].as_array().unwrap().len(), 3);
+        assert_eq!(result["messages"][0]["id"], "1");
+        assert_eq!(result["messages"][1]["text"], "updated");
+        assert_eq!(result["messages"][2]["chatId"], 77);
+        assert_eq!(result["changed"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn preserves_elements_and_tracks_edits_and_deleted_state() {
+        let result = merge_message_batch(
+            vec![json!({"id": 5, "time": 1, "text": "old", "elements": [{"type":"text"}], "deleted": true, "deleted_at": 9})],
+            vec![json!({"id": "5", "time": 1, "text": "new", "elements": [], "status": "EDITED"})],
+            Some(json!(7)),
+            123,
+        );
+        let message = &result["messages"][0];
+        assert_eq!(message["elements"][0]["type"], "text");
+        assert_eq!(message["deleted"], true);
+        assert_eq!(message["deleted_at"], 9);
+        assert_eq!(message["edited"], true);
+        assert_eq!(message["history"][0]["diff"].as_array().unwrap().len() > 0, true);
+    }
+
+    #[test]
+    fn incoming_history_deduplicates_by_timestamp_and_suppresses_generated_diff() {
+        let result = merge_message_batch(
+            vec![json!({"id": 1, "text": "old", "history": [{"at": 10, "diff": []}]})],
+            vec![json!({"id": 1, "text": "new", "history": [{"at": 10, "diff": [1]}, {"at": 20, "diff": [2]}]})],
+            None,
+            99,
+        );
+        assert_eq!(result["messages"][0]["history"].as_array().unwrap().len(), 2);
+    }
+}
