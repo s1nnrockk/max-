@@ -701,7 +701,13 @@ mod incoming_message_tests {
 #[tauri::command]
 pub fn normalize_message_deletion(payload: Value) -> Value {
     let chat_id = payload.get("chatId")
-        .filter(|value| !value.is_null() && value != &&json!(false) && value != &&json!(0) && value != &&json!(""))
+        .filter(|value| match value {
+            Value::Null => false,
+            Value::Bool(flag) => *flag,
+            Value::Number(number) => number.as_f64().unwrap_or(0.0) != 0.0,
+            Value::String(text) => !text.is_empty(),
+            _ => true,
+        })
         .cloned()
         .or_else(|| payload.get("chat").and_then(|chat| chat.get("id")).cloned());
     let mut message_ids: Vec<String> = payload.get("messageIds")
