@@ -696,6 +696,49 @@ mod incoming_message_tests {
 }
 
 
+
+/// Normalize server message-deletion payloads before the UI updates its stores.
+#[tauri::command]
+pub fn normalize_message_deletion(payload: Value) -> Value {
+    let chat_id = payload.get("chatId")
+        .filter(|value| !value.is_null() && value != &&json!(false) && value != &&json!(0) && value != &&json!(""))
+        .cloned()
+        .or_else(|| payload.get("chat").and_then(|chat| chat.get("id")).cloned());
+    let mut message_ids: Vec<String> = payload.get("messageIds")
+        .and_then(Value::as_array)
+        .map(|ids| ids.iter().filter_map(|id| match id {
+            Value::String(value) => Some(value.clone()),
+            Value::Number(value) => Some(value.to_string()),
+            _ => None,
+        }).collect())
+        .unwrap_or_default();
+    if message_ids.is_empty() {
+        if let Some(id) = payload.get("messageId") {
+            match id {
+                Value::String(value) if !value.is_empty() => message_ids.push(value.clone()),
+                Value::Number(value) => message_ids.push(value.to_string()),
+                _ => {}
+            }
+        }
+    }
+    json!({"chatId": chat_id, "messageIds": message_ids})
+}
+
+#[cfg(test)]
+mod message_deletion_payload_tests {
+    use super::normalize_message_deletion;
+    use serde_json::json;
+    #[test]
+    fn accepts_single_and_multiple_message_ids() {
+        let single = normalize_message_deletion(json!({"chat":{"id":7},"messageId":42}));
+        assert_eq!(single["chatId"], 7);
+        assert_eq!(single["messageIds"], json!(["42"]));
+        let multiple = normalize_message_deletion(json!({"chatId":8,"messageIds":[1,"2"]}));
+        assert_eq!(multiple["chatId"], 8);
+        assert_eq!(multiple["messageIds"], json!(["1","2"]));
+    }
+}
+
 /// Merge a chat read receipt and its per-participant read marker in Rust.
 #[tauri::command]
 pub fn merge_chat_read_receipt(mut chat: Value, user_id: u64, mark: i64, current_user_id: u64) -> Value {
